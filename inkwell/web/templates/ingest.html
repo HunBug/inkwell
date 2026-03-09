@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+
+{% block title %}Ingestion Review — Inkwell{% endblock %}
+
+{% block extra_css %}
+<style>
+    .controls {
+        background: white;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .image-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+    }
+    .image-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: box-shadow 0.2s;
+        position: relative;
+        border: 2px solid transparent;
+    }
+    .image-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .image-card img {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #f8f9fa;
+        transition: transform 0.2s ease;
+    }
+    .image-card.double-page {
+        border: 2px solid #ff9800;
+        background: #fff8f0;
+    }
+    .image-card.double-page::after {
+        content: '📄📄';
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        font-size: 1.2rem;
+        background: #ff9800;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+    }
+    .image-badge {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap-reverse;
+    }
+    .image-badge-item {
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 0.3rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .image-badge-rotation {
+        background: #3498db;
+    }
+    .image-badge-layout {
+        background: #27ae60;
+    }
+    .image-badge-layout.no-text {
+        background: #e74c3c;
+    }
+    
+    /* Zoom modal */
+    .zoom-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.95);
+        z-index: 10000;
+        align-items: center;
+        justify-content: center;
+    }
+    .zoom-modal.active {
+        display: flex;
+    }
+    .zoom-modal img {
+        max-width: 90vw;
+        max-height: 90vh;
+        object-fit: contain;
+        cursor: zoom-out;
+    }
+    .image-info {
+        margin-top: 0.75rem;
+        font-size: 0.85rem;
+    }
+    .image-info .label {
+        font-weight: 600;
+        color: #555;
+    }
+    .image-controls {
+        margin-top: 0.75rem;
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .image-controls select {
+        padding: 0.4rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 0.85rem;
+    }
+    .image-controls button {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.85rem;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 3px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .status-badge.confirmed {
+        background: #d4edda;
+        color: #155724;
+    }
+    .status-badge.pending {
+        background: #fff3cd;
+        color: #856404;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>Ingestion Review</h2>
+
+<div class="controls">
+    <label for="filterSelect" style="font-weight: 600; margin-right: 1rem;">Filter:</label>
+    <select id="filterSelect" onchange="changeFilter(this.value)" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+        <option value="pending" {% if filter_by == "pending" %}selected{% endif %}>Pending</option>
+        <option value="all" {% if filter_by == "all" %}selected{% endif %}>All</option>
+        <option value="single" {% if filter_by == "single" %}selected{% endif %}>Single-page</option>
+        <option value="double" {% if filter_by == "double" %}selected{% endif %}>Double-page</option>
+        <option value="no_text" {% if filter_by == "no_text" %}selected{% endif %}>No Text</option>
+    </select>
+</div>
+
+<div class="image-grid">
+    {% for img in images %}
+    <div class="image-card" data-id="{{ img.id }}">
+        <img src="/ingest/image/{{ img.id }}" alt="{{ img.filename }}" 
+             onerror="this.src=&quot;data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22280%22 height=%22200%22%3E%3Crect fill=%22%23e9ecef%22 width=%22280%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23666%22 font-family=%22sans-serif%22 font-size=%2214%22%3EError%3C/text%3E%3C/svg%3E&quot;" 
+             class="image-card-img" 
+             style="cursor: zoom-in;">
+        
+        <div class="image-badge"></div>
+        
+        <div class="image-info">
+            <div><span class="label">File:</span> {{ img.filename }}</div>
+            <div><span class="label">Notebook:</span> {{ img.notebook_label }}</div>
+            <div>
+                <span class="label">Status:</span>
+                {% if img.orientation_confirmed is not none %}
+                    <span class="status-badge confirmed">Confirmed</span>
+                {% else %}
+                    <span class="status-badge pending">Pending</span>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="image-controls">
+            <select class="orientation-select">
+                {% set current_orientation = img.orientation_confirmed if img.orientation_confirmed is not none else img.orientation_detected %}
+                <option value="0" {% if current_orientation == 0 %}selected{% endif %}>0°</option>
+                <option value="90" {% if current_orientation == 90 %}selected{% endif %}>90°</option>
+                <option value="180" {% if current_orientation == 180 %}selected{% endif %}>180°</option>
+                <option value="270" {% if current_orientation == 270 %}selected{% endif %}>270°</option>
+            </select>
+            
+            <select class="layout-select">
+                <option value="SINGLE" {% if img.layout_type == "SINGLE" %}selected{% endif %}>Single</option>
+                <option value="DOUBLE" {% if img.layout_type == "DOUBLE" %}selected{% endif %}>Double</option>
+                <option value="NO_TEXT" {% if img.layout_type == "NO_TEXT" %}selected{% endif %}>No Text</option>
+            </select>
+            
+            <button onclick="confirmImage({{ img.id }})">Confirm</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pagination -->
+<div style="margin-top: 2rem; padding: 1rem; background: white; border-radius: 4px; text-align: center;">
+    <div style="margin-bottom: 1rem; font-size: 0.9rem; color: #666;">
+        Page {{ page }} of {{ total_pages }} ({{ total_count }} total images)
+    </div>
+    <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+        {% if page > 1 %}
+            <a href="?filter={{ filter_by }}&page={{ page - 1 }}" 
+               style="padding: 0.5rem 1rem; background: #3498db; color: white; border-radius: 4px; text-decoration: none;">
+                ← Previous
+            </a>
+        {% endif %}
+        
+        {% if page < total_pages %}
+            <a href="?filter={{ filter_by }}&page={{ page + 1 }}" 
+               style="padding: 0.5rem 1rem; background: #3498db; color: white; border-radius: 4px; text-decoration: none;">
+                Next →
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Zoom Modal -->
+<div id="zoomModal" class="zoom-modal">
+    <img id="zoomImage" src="" alt="Zoomed image">
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function changeFilter(value) {
+        // When changing filter, go back to page 1
+        window.location.href = `?filter=${value}&page=1`;
+    }
+    
+    function setupCardInteractivity() {
+        // For each card, set up rotation and layout preview
+        document.querySelectorAll('.image-card').forEach(card => {
+            const img = card.querySelector('.image-card-img');
+            const badge = card.querySelector('.image-badge');
+            const orientationSelect = card.querySelector('.orientation-select');
+            const layoutSelect = card.querySelector('.layout-select');
+            
+            // Apply initial rotation from select value
+            if (orientationSelect && img) {
+                const initialRotation = parseInt(orientationSelect.value);
+                img.style.transform = `rotate(${initialRotation}deg)`;
+            }
+            
+            // Handle rotation preview
+            if (orientationSelect) {
+                orientationSelect.addEventListener('change', function() {
+                    const rotation = parseInt(this.value);
+                    img.style.transform = `rotate(${rotation}deg)`;
+                    updateBadges(card, orientationSelect.value, layoutSelect.value);
+                });
+            }
+            
+            // Handle double-page visualization and badges
+            if (layoutSelect) {
+                // Set initial state
+                updateCardForLayout(card, layoutSelect.value);
+                updateBadges(card, orientationSelect ? orientationSelect.value : '0', layoutSelect.value);
+                
+                layoutSelect.addEventListener('change', function() {
+                    updateCardForLayout(card, this.value);
+                    updateBadges(card, orientationSelect.value, this.value);
+                });
+            }
+            
+            // Add zoom functionality
+            if (img) {
+                img.addEventListener('click', function(e) {
+                    const zoomModal = document.getElementById('zoomModal');
+                    const zoomImage = document.getElementById('zoomImage');
+                    zoomImage.src = img.src;
+                    zoomImage.style.transform = `rotate(${img.style.transform.match(/\d+/) ? img.style.transform.match(/\d+/)[0] : 0}deg)`;
+                    zoomModal.classList.add('active');
+                });
+            }
+        });
+        
+        // Close zoom modal on click or outside
+        const zoomModal = document.getElementById('zoomModal');
+        const zoomImage = document.getElementById('zoomImage');
+        if (zoomModal) {
+            zoomModal.addEventListener('click', function(e) {
+                if (e.target === zoomModal || e.target === zoomImage) {
+                    zoomModal.classList.remove('active');
+                }
+            });
+            
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && zoomModal.classList.contains('active')) {
+                    zoomModal.classList.remove('active');
+                }
+            });
+        }
+    }
+    
+    function updateCardForLayout(card, layoutType) {
+        if (layoutType === 'DOUBLE') {
+            card.classList.add('double-page');
+        } else {
+            card.classList.remove('double-page');
+        }
+    }
+    
+    function updateBadges(card, rotation, layoutType) {
+        const badge = card.querySelector('.image-badge');
+        badge.innerHTML = '';
+        
+        // Layout badge
+        let layoutLabel = layoutType;
+        let layoutClass = 'image-badge-layout';
+        if (layoutType === 'NO_TEXT') {
+            layoutLabel = '🚫 No Text';
+            layoutClass += ' no-text';
+        } else if (layoutType === 'SINGLE') {
+            layoutLabel = '📄 Single';
+        } else if (layoutType === 'DOUBLE') {
+            layoutLabel = '📄📄 Double';
+        }
+        
+        const layoutBadge = document.createElement('span');
+        layoutBadge.className = layoutClass;
+        layoutBadge.textContent = layoutLabel;
+        badge.appendChild(layoutBadge);
+        
+        // Rotation badge
+        const rotationBadge = document.createElement('span');
+        rotationBadge.className = 'image-badge-item image-badge-rotation';
+        rotationBadge.textContent = `↻ ${rotation}°`;
+        badge.appendChild(rotationBadge);
+    }
+    
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', setupCardInteractivity);
+    
+    async function confirmImage(id) {
+        console.group('confirmImage call');
+        console.log('id:', id);
+        
+        const card = document.querySelector(`[data-id="${id}"]`);
+        console.log('card found:', !!card);
+        if (card) {
+            console.log('card HTML:', card.outerHTML);
+            console.log('card children count:', card.children.length);
+            console.log('card innerHTML length:', card.innerHTML.length);
+        }
+        
+        if (!card) {
+            console.error('Card not found');
+            console.groupEnd();
+            alert('Error: Could not find image card element');
+            return;
+        }
+        
+        // Look for all selects in the page to debug
+        const allSelects = document.querySelectorAll('select');
+        console.log('total selects on page:', allSelects.length);
+        
+        const orientationSelect = card.querySelector('.orientation-select');
+        const layoutSelect = card.querySelector('.layout-select');
+        console.log('orientation select found:', !!orientationSelect);
+        console.log('layout select found:', !!layoutSelect);
+        
+        if (!orientationSelect || !layoutSelect) {
+            console.error('Select elements not found in card');
+            console.log('card content:', card.innerHTML);
+            console.groupEnd();
+            alert('Error: Could not find select elements. Check console.');
+            return;
+        }
+        
+        const orientation = parseInt(orientationSelect.value);
+        const layout = layoutSelect.value;
+        const should_ocr = layout === 'NO_TEXT' ? 0 : 1;
+        
+        console.log('data to send:', { id, orientation, layout, should_ocr });
+        console.groupEnd();
+        
+        try {
+            const response = await fetch(`/ingest/${id}/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ orientation, layout, should_ocr })
+            });
+            
+            console.log('Response status:', response.status);
+            
+            if (response.ok) {
+                console.log('Success! Reloading...');
+                // Reload page with current filter and page to show next batch
+                const filter = document.getElementById('filterSelect').value;
+                const params = new URLSearchParams(window.location.search);
+                const page = params.get('page') || '1';
+                window.location.href = `?filter=${filter}&page=${page}`;
+            } else {
+                const text = await response.text();
+                console.error('Error response:', text);
+                alert('Error confirming image: ' + response.status);
+            }
+        } catch (error) {
+            console.error('Fetch error:', error);
+            alert('Error confirming image: ' + error.message);
+        }
+    }
+</script>
+{% endblock %}

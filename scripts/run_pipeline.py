@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,10 +26,27 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    print(
-        f"Pipeline command '{args.command}' is not implemented yet. "
-        "Phase 0 provides the CLI contract only."
-    )
+    
+    if args.command == "ingest":
+        from inkwell.config import get_root_path
+        from inkwell.db import get_connection
+        from inkwell.pipeline.ingest import run_ingest
+        
+        conn = get_connection()
+        root_path = get_root_path(conn, args.root)
+        
+        print("Running orientation and layout detection...")
+        stats = run_ingest(conn, root_path)
+        
+        print(f"\nIngest complete:")
+        print(f"  Processed: {stats['processed']} images")
+        print(f"  Double-page layouts: {stats['double_pages']}")
+        print(f"  Rotated pages: {stats['rotated_pages']}")
+    else:
+        print(
+            f"Pipeline command '{args.command}' is not implemented yet. "
+            "Additional stages coming in later phases."
+        )
 
 
 if __name__ == "__main__":

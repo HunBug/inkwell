@@ -1,0 +1,14 @@
+# Optional ML/OCR training stack
+# Install only when you need OCR model training/inference components.
+
+# Hugging Face stack
+transformers>=4.45,<5
+datasets>=3.0,<5
+
+# Torch is not yet consistently available on all very-new Python releases.
+# For Python 3.14+, use a dedicated env once wheels are available.
+torch>=2.5,<2.11; python_version < "3.14"
+
+# Kraken is pinned by upstream to old torch<1.11 and conflicts with modern torch.
+# Use a dedicated legacy environment (recommended Python 3.10) if Kraken is required.
+kraken==3.0.13; python_version < "3.11"

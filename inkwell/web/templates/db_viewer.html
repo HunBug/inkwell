@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Database Viewer — Inkwell{% endblock %}
+
+{% block content %}
+<h2>Database Viewer</h2>
+
+<div style="margin-bottom: 1rem;">
+    <a href="/db/query" style="color: #3498db; text-decoration: none; padding: 0.5rem 1rem; background: #e3f2fd; border-radius: 4px;">
+        ⚡ SQL Query Executor
+    </a>
+</div>
+
+<div style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h3>Tables</h3>
+    <ul style="list-style: none; padding: 0;">
+        {% for table in tables %}
+        <li style="margin: 0.5rem 0;">
+            <a href="/db/table/{{ table }}" style="color: #3498db; text-decoration: none; font-size: 1.1rem;">
+                📋 {{ table }}
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

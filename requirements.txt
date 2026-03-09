@@ -1,10 +1,7 @@
-flask
-numpy
-opencv-python
-Pillow
-torch
-transformers
-datasets
-kraken
-tqdm
-scikit-learn
+flask>=3.1,<4
+numpy>=2.2,<3
+opencv-python>=4.10,<5
+Pillow>=11.0,<12
+pytesseract>=0.3.13,<0.4
+tqdm>=4.67,<5
+scikit-learn>=1.5,<2

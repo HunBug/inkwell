@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ table_name }} — Database Viewer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .db-table {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow-x: auto;
+    }
+    .db-table table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    .db-table th {
+        background: #f8f9fa;
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 2px solid #dee2e6;
+        font-weight: 600;
+    }
+    .db-table td {
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .db-table tr:hover {
+        background: #f8f9fa;
+    }
+    .null-value {
+        color: #999;
+        font-style: italic;
+    }
+    .pagination-info {
+        margin-top: 1rem;
+        color: #666;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>Table: {{ table_name }}</h2>
+
+<div style="margin-bottom: 1rem;">
+    <a href="/db" style="color: #3498db; text-decoration: none;">← Back to tables</a>
+</div>
+
+<div class="db-table">
+    <div class="pagination-info">
+        Showing {{ offset + 1 }} to {{ [offset + limit, total_count]|min }} of {{ total_count }} rows
+    </div>
+    
+    <table>
+        <thead>
+            <tr>
+                {% for col in schema %}
+                <th>{{ col.name }}{% if col.pk %} 🔑{% endif %}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                {% for col in schema %}
+                <td>
+                    {% if row[col.name] is none %}
+                        <span class="null-value">NULL</span>
+                    {% else %}
+                        {{ row[col.name] }}
+                    {% endif %}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <div class="pagination-info">
+        {% if offset > 0 %}
+            <a href="?offset={{ [offset - limit, 0]|max }}&limit={{ limit }}">← Previous</a>
+        {% endif %}
+        {% if offset + limit < total_count %}
+            <a href="?offset={{ offset + limit }}&limit={{ limit }}" style="margin-left: 1rem;">Next →</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

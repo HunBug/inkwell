@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}SQL Query — Database Viewer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .query-box {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1.5rem;
+    }
+    .query-box textarea {
+        width: 100%;
+        min-height: 100px;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+    .results-table {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow-x: auto;
+    }
+    .results-table table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    .results-table th {
+        background: #f8f9fa;
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 2px solid #dee2e6;
+        font-weight: 600;
+    }
+    .results-table td {
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .error-box {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>SQL Query Executor</h2>
+
+<div style="margin-bottom: 1rem;">
+    <a href="/db" style="color: #3498db; text-decoration: none;">← Back to tables</a>
+</div>
+
+<div class="query-box">
+    <form method="POST">
+        <textarea name="query" placeholder="Enter SQL query (SELECT only)...">{{ query or '' }}</textarea>
+        <button type="submit" style="margin-top: 1rem;">Execute Query</button>
+    </form>
+    
+    <div style="margin-top: 1rem; color: #666; font-size: 0.85rem;">
+        <strong>Quick queries:</strong><br>
+        • <code>SELECT * FROM source_images LIMIT 10</code><br>
+        • <code>SELECT COUNT(*) as total, orientation_confirmed IS NOT NULL as confirmed FROM source_images GROUP BY confirmed</code><br>
+        • <code>SELECT layout_type, COUNT(*) as count FROM source_images GROUP BY layout_type</code>
+    </div>
+</div>
+
+{% if error %}
+<div class="error-box">
+    <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+
+{% if results is not none %}
+<div class="results-table">
+    <p><strong>{{ row_count }} rows returned</strong></p>
+    {% if results %}
+    <table>
+        <thead>
+            <tr>
+                {% for col in results[0].keys() %}
+                <th>{{ col }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in results %}
+            <tr>
+                {% for col in row.keys() %}
+                <td>
+                    {% if row[col] is none %}
+                        <span style="color: #999; font-style: italic;">NULL</span>
+                    {% else %}
+                        {{ row[col] }}
+                    {% endif %}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>Query executed successfully (no results to display).</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
