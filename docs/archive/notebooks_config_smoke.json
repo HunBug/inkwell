@@ -1,0 +1,15 @@
+{
+  "root_path": "/home/akoss/mnt/lara-archive-reader/kumpli-history/archive/archive/kumplisagok/Bogár_naplók",
+  "notebooks": [
+    {
+      "folder_name": "1",
+      "label": "Notebook 1 (smoke)",
+      "notes": "Small test config"
+    },
+    {
+      "folder_name": "2",
+      "label": "Notebook 2 (smoke)",
+      "notes": "Small test config"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+flask
+numpy
+opencv-python
+Pillow
+torch
+transformers
+datasets
+kraken
+tqdm
+scikit-learn
