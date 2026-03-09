@@ -13,7 +13,7 @@
     }
     .image-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        grid-template-columns: repeat(2, 1fr);
         gap: 1.5rem;
     }
     .image-card {
@@ -154,6 +154,15 @@
     </select>
 </div>
 
+<div style="background: #ecf0f1; padding: 0.75rem; border-radius: 4px; margin-bottom: 1.5rem; font-size: 0.85rem;">
+    <strong>⌨️ Hotkeys:</strong> 
+    <code>Enter</code>=Confirm | 
+    <code>Q</code>=Quick (90°+Double) | 
+    <code>D/S/N</code>=Double/Single/NoText | 
+    <code>9/8/7/0</code>=90°/180°/270°/0° | 
+    <code>↑↓</code>=Previous/Next card
+</div>
+
 <div class="image-grid">
     {% for img in images %}
     <div class="image-card" data-id="{{ img.id }}">
@@ -192,7 +201,8 @@
                 <option value="NO_TEXT" {% if img.layout_type == "NO_TEXT" %}selected{% endif %}>No Text</option>
             </select>
             
-            <button onclick="confirmImage({{ img.id }})">Confirm</button>
+            <button onclick="confirmImage({{ img.id }})" style="background: #3498db; color: white; border: none; cursor: pointer;">Confirm</button>
+            <button onclick="quickConfirmImage({{ img.id }})" title="Quick: 90° + Double (Q key)" style="background: #27ae60; color: white; border: none; cursor: pointer; font-weight: bold;">⚡ Q</button>
         </div>
     </div>
     {% endfor %}
@@ -334,6 +344,126 @@
         rotationBadge.textContent = `↻ ${rotation}°`;
         badge.appendChild(rotationBadge);
     }
+    
+    // Track active card (last hovered or clicked)
+    let activeCard = null;
+    
+    function quickConfirmImage(id) {
+        const card = document.querySelector(`[data-id="${id}"]`);
+        const layoutSelect = card.querySelector('.layout-select');
+        const orientationSelect = card.querySelector('.orientation-select');
+        
+        // Set to 90° + Double
+        orientationSelect.value = '90';
+        layoutSelect.value = 'DOUBLE';
+        
+        // Update UI
+        const img = card.querySelector('.image-card-img');
+        img.style.transform = 'rotate(90deg)';
+        updateCardForLayout(card, 'DOUBLE');
+        updateBadges(card, '90', 'DOUBLE');
+        
+        // Confirm
+        setTimeout(() => confirmImage(id), 100);
+    }
+    
+    // Hotkey support
+    document.addEventListener('keydown', function(e) {
+        // Find first card if no active card
+        if (!activeCard) {
+            activeCard = document.querySelector('.image-card');
+        }
+        
+        if (!activeCard) return;
+        
+        const id = parseInt(activeCard.getAttribute('data-id'));
+        const layoutSelect = activeCard.querySelector('.layout-select');
+        const orientationSelect = activeCard.querySelector('.orientation-select');
+        
+        let handled = false;
+        
+        switch(e.key) {
+            case 'Enter':
+                confirmImage(id);
+                handled = true;
+                break;
+            case 'q':
+            case 'Q':
+                quickConfirmImage(id);
+                handled = true;
+                break;
+            case 'd':
+            case 'D':
+                layoutSelect.value = 'DOUBLE';
+                layoutSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case 's':
+            case 'S':
+                layoutSelect.value = 'SINGLE';
+                layoutSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case 'n':
+            case 'N':
+                layoutSelect.value = 'NO_TEXT';
+                layoutSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case '9':
+                orientationSelect.value = '90';
+                orientationSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case '8':
+                orientationSelect.value = '180';
+                orientationSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case '7':
+                orientationSelect.value = '270';
+                orientationSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case '0':
+                orientationSelect.value = '0';
+                orientationSelect.dispatchEvent(new Event('change'));
+                handled = true;
+                break;
+            case 'ArrowDown':
+            case 'ArrowRight':
+                // Move to next card
+                const nextCard = activeCard.nextElementSibling;
+                if (nextCard && nextCard.classList.contains('image-card')) {
+                    activeCard = nextCard;
+                    activeCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    handled = true;
+                }
+                break;
+            case 'ArrowUp':
+            case 'ArrowLeft':
+                // Move to previous card
+                const prevCard = activeCard.previousElementSibling;
+                if (prevCard && prevCard.classList.contains('image-card')) {
+                    activeCard = prevCard;
+                    activeCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    handled = true;
+                }
+                break;
+        }
+        
+        if (handled) {
+            e.preventDefault();
+        }
+    });
+    
+    // Track hover for active card
+    document.addEventListener('mouseover', function(e) {
+        const card = e.target.closest('.image-card');
+        if (card) {
+            activeCard = card;
+        }
+    });
     
     // Initialize when page loads
     document.addEventListener('DOMContentLoaded', setupCardInteractivity);
