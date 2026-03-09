@@ -27,12 +27,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     
+    # Get database path
+    from inkwell.db import get_connection
+    db_path = str(PROJECT_ROOT / "working" / "inkwell.db")
+    
     if args.command == "ingest":
         from inkwell.config import get_root_path
-        from inkwell.db import get_connection
         from inkwell.pipeline.ingest import run_ingest
         
-        conn = get_connection()
+        conn = get_connection(db_path)
         root_path = get_root_path(conn, args.root)
         
         print("Running orientation and layout detection...")
@@ -42,6 +45,19 @@ def main() -> None:
         print(f"  Processed: {stats['processed']} images")
         print(f"  Double-page layouts: {stats['double_pages']}")
         print(f"  Rotated pages: {stats['rotated_pages']}")
+        
+    elif args.command == "preprocess":
+        from inkwell.pipeline.preprocess import preprocess_all
+        
+        print("Running preprocessing (rotate, deskew, split)...")
+        stats = preprocess_all(db_path, force=args.force)
+        
+        print(f"\nPreprocessing complete:")
+        print(f"  Processed: {stats['processed']} source images")
+        print(f"  Single pages: {stats['single_pages']}")
+        print(f"  Double pages: {stats['double_pages']} (split into {stats['double_pages']*2} pages)")
+        print(f"  Errors: {stats['errors']}")
+        
     else:
         print(
             f"Pipeline command '{args.command}' is not implemented yet. "

@@ -49,13 +49,14 @@ CREATE TABLE IF NOT EXISTS source_images (
 );
 
 CREATE TABLE IF NOT EXISTS pages (
-  id                INTEGER PRIMARY KEY,
-  source_image_id   INTEGER NOT NULL REFERENCES source_images(id),
-  side              TEXT NOT NULL DEFAULT 'FULL',
-  page_type         TEXT NOT NULL DEFAULT 'text',
-  processing_status TEXT NOT NULL DEFAULT 'pending',
-  force_reprocess   INTEGER NOT NULL DEFAULT 0,
-  notes             TEXT,
+  id                  INTEGER PRIMARY KEY,
+  source_image_id     INTEGER NOT NULL REFERENCES source_images(id),
+  side                TEXT NOT NULL DEFAULT 'FULL',
+  page_type           TEXT NOT NULL DEFAULT 'text',
+  processing_status   TEXT NOT NULL DEFAULT 'pending',
+  force_reprocess     INTEGER NOT NULL DEFAULT 0,
+  derived_image_path  TEXT,
+  notes               TEXT,
   UNIQUE(source_image_id, side)
 );
 
