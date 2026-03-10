@@ -58,6 +58,18 @@ def main() -> None:
         print(f"  Double pages: {stats['double_pages']} (split into {stats['double_pages']*2} pages)")
         print(f"  Errors: {stats['errors']}")
         
+    elif args.command == "segment":
+        from inkwell.pipeline.segment import segment_all
+        
+        method = args.model or 'cv_projection'
+        print(f"Running line segmentation (method={method})...")
+        stats = segment_all(db_path, force=args.force, method=method)
+        
+        print(f"\nSegmentation complete:")
+        print(f"  Processed: {stats['processed']} pages")
+        print(f"  Total lines extracted: {stats['total_lines']}")
+        print(f"  Errors: {stats['errors']}")
+        
     else:
         print(
             f"Pipeline command '{args.command}' is not implemented yet. "
