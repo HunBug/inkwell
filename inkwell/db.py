@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS transcriptions (
   model_version      TEXT,
   created_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by         TEXT NOT NULL,
+  flag               TEXT,
   immutable          INTEGER NOT NULL DEFAULT 0
 );
 

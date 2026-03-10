@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inkwell - Review Annotations</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+        }
+        
+        .stats {
+            background: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 3px solid #007bff;
+        }
+        
+        .items {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            display: flex;
+            gap: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .item:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #007bff;
+        }
+        
+        .item-image {
+            flex-shrink: 0;
+            width: 100px;
+            height: 100px;
+            overflow: hidden;
+            background: #f9f9f9;
+        }
+        
+        .item-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .item-content {
+            flex: 1;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .item-meta {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .badge.corrected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge.flagged {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .item-text {
+            font-size: 14px;
+            line-height: 1.4;
+            margin-top: 8px;
+            font-family: 'Courier New', monospace;
+            color: #333;
+        }
+        
+        .item-text small {
+            display: block;
+            color: #999;
+            margin-top: 5px;
+            font-family: system-ui;
+        }
+        
+        .pagination {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 30px;
+            margin-bottom: 20px;
+        }
+        
+        .pagination a, .pagination span {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #007bff;
+        }
+        
+        .pagination a:hover {
+            background: #f0f0f0;
+        }
+        
+        .pagination .active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #007bff;
+            text-decoration: none;
+        }
+        
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/annotate" class="back-link">← Back to Annotate</a>
+        
+        <h1>Review Annotations</h1>
+        <div class="stats">
+            Total: <strong>{{ total }}</strong> | Page <strong>{{ page }}</strong> of <strong>{{ total_pages }}</strong>
+        </div>
+        
+        <div class="items">
+            {% for item in items %}
+                <div class="item" onclick="location.href='/annotate/edit/{{ item.line_id }}'">
+                    <div class="item-image">
+                        <img src="/working/line_crops/{{ item.crop_image_path }}" alt="Line">
+                    </div>
+                    <div class="item-content">
+                        <div class="item-meta">
+                            <span>Line #{{ item.line_id }}</span>
+                            <span>{{ item.created_at }}</span>
+                            {% if item.flag %}
+                                <span style="color: #f44336;">Flags: {{ item.flag }}</span>
+                            {% endif %}
+                        </div>
+                        
+                        {% if item.transcription_type == 'HUMAN_CORRECTED' %}
+                            <span class="badge corrected">CORRECTED</span>
+                        {% else %}
+                            <span class="badge flagged">FLAGGED</span>
+                        {% endif %}
+                        
+                        {% if item.corrected_text %}
+                            <div class="item-text">
+                                {{ item.corrected_text }}
+                                <small>OCR: {{ item.ocr_text }}</small>
+                            </div>
+                        {% else %}
+                            <div class="item-text" style="color: #999; font-style: italic;">
+                                (Flagged only, no text correction)
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+        
+        {% if total_pages > 1 %}
+            <div class="pagination">
+                {% if page > 1 %}
+                    <a href="?page=1">«</a>
+                    <a href="?page={{ page - 1 }}">‹</a>
+                {% endif %}
+                
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}
+                        <span class="active">{{ p }}</span>
+                    {% else %}
+                        <a href="?page={{ p }}">{{ p }}</a>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if page < total_pages %}
+                    <a href="?page={{ page + 1 }}">›</a>
+                    <a href="?page={{ total_pages }}">»</a>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

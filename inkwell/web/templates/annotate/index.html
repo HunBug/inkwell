@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inkwell - Line Annotation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            overflow-y: auto;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #222;
+        }
+        
+        .stats {
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            border-left: 3px solid #007bff;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .stat-value {
+            font-weight: 700;
+            color: #007bff;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #007bff, #0056b3);
+            transition: width 0.3s ease;
+        }
+        
+        .line-image {
+            max-width: 600px;
+            max-height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .ocr-box {
+            background: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 600px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .ocr-label {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .ocr-text {
+            font-size: 16px;
+            color: #333;
+            line-height: 1.5;
+            font-family: 'Courier New', monospace;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 2px;
+            word-break: break-word;
+        }
+        
+        .confidence-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        
+        .form-group {
+            width: 100%;
+            max-width: 600px;
+        }
+        
+        label {
+            display: block;
+            color: #555;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+            min-height: 100px;
+            line-height: 1.5;
+            transition: border-color 0.2s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+        }
+        
+        .buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            width: 100%;
+            max-width: 600px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-submit {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-submit:hover {
+            background: #218838;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(40,167,69,0.2);
+        }
+        
+        .btn-skip {
+            background: #f8f9fa;
+            color: #666;
+            border: 1px solid #ddd;
+        }
+        
+        .btn-skip:hover {
+            background: #e9ecef;
+            border-color: #999;
+        }
+        
+        .shortcut-info {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+            text-align: center;
+        }
+        
+        .status {
+            margin-top: 15px;
+            font-size: 12px;
+            color: #999;
+            text-align: center;
+        }
+        
+        .status.saving {
+            color: #ff9800;
+        }
+        
+        .status.success {
+            color: #28a745;
+        }
+        
+        .status.error {
+            color: #dc3545;
+        }
+        
+        .img-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 700px;
+        }
+        
+        .img-label {
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 3px;
+            font-weight: 600;
+        }
+        
+        .img-stack img {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 2px;
+            display: block;
+        }
+        
+        .img-2x-wrap {
+            overflow-x: auto;
+        }
+        
+        .img-2x-wrap img {
+            width: 200%;
+            max-width: none;
+        }
+        
+        .hungarian-chars {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 8px;
+            padding: 8px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        .hu-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        
+        .hu-char-btn {
+            padding: 5px 8px;
+            border: 1px solid #ccc;
+            background: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+        }
+        
+        .hu-char-btn:hover {
+            background: #e3f2fd;
+            border-color: #007bff;
+        }
+        
+        .hints-box {
+            background: #f0f7ff;
+            border-left: 3px solid #0066cc;
+            padding: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: #333;
+            margin-top: 10px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Inkwell</h1>
+            <p style="color: #666; font-size: 13px; margin-bottom: 20px;">Human Annotation</p>
+            
+            <div class="stats">
+                <div class="stat-row">
+                    <span class="stat-label">Progress</span>
+                    <span class="stat-value" id="progress">{{ stats.progress }}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Annotated</span>
+                    <span class="stat-value" id="annotated">{{ stats.annotated }}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Remaining</span>
+                    <span class="stat-value" id="remaining">{{ stats.remaining }}</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressBar" style="width: {{ stats.percent if stats.total > 0 else 0 }}%"></div>
+                </div>
+            </div>
+            
+            <div style="flex: 1;"></div>
+            
+            <div style="border-top: 1px solid #eee; padding-top: 15px;">
+                <a href="/annotate/review" style="display: block; color: #007bff; text-decoration: none; margin-bottom: 15px; font-size: 13px;">
+                    ✎ Review Annotations
+                </a>
+                
+                <p style="font-size: 12px; color: #999; margin-bottom: 10px;">Keyboard Shortcuts:</p>
+                <ul style="list-style: none; font-size: 12px; line-height: 1.8; color: #666;">
+                    <li><kbd style="background: #f0f0f0; padding: 2px 5px; border-radius: 2px;">Enter</kbd> Save</li>
+                    <li><kbd style="background: #f0f0f0; padding: 2px 5px; border-radius: 2px;">Esc</kbd> Skip</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="main">
+            <div id="line-container">
+                {% if line %}
+                    <div class="img-stack">
+                        <div>
+                            <div class="img-label">Original</div>
+                            <img src="/working/line_crops/{{ line.crop_path }}" alt="Line">
+                        </div>
+                        <div>
+                            <div class="img-label">2× magnified</div>
+                            <div class="img-2x-wrap">
+                                <img src="/working/line_crops/{{ line.crop_path }}" alt="Line">
+                            </div>
+                        </div>
+                        <div>
+                            <div class="img-label">Context</div>
+                            <img src="/annotate/api/context/{{ line.id }}" alt="Context">
+                        </div>
+                    </div>
+                    
+                    <div class="ocr-box">
+                        <div class="ocr-label">
+                            <span>Current OCR</span>
+                            <span class="confidence-badge">{{ line.confidence }} conf</span>
+                        </div>
+                        <div class="ocr-text">{{ line.ocr_text }}</div>
+                    </div>
+                    
+                    <form id="annotationForm">
+                        <div class="form-group">
+                            <label for="correctedText">Corrected Text</label>
+                            <textarea id="correctedText" placeholder="Enter corrected text..." autofocus></textarea>
+                            <div class="shortcut-info">Press Enter to save, Esc to skip</div>
+                            
+                            <div class="hints-box">
+                                <strong>Markers:</strong>
+                                <code>[ur]</code> = unreadable &nbsp;
+                                <code>[nt]</code> = not text &nbsp;
+                                <code>[?]</code> = uncertain
+                                <div style="margin-top: 8px; display: flex; gap: 6px;">
+                                    <button type="button" class="hu-char-btn" data-char="[ur] " style="font-size: 11px;">[ur]</button>
+                                    <button type="button" class="hu-char-btn" data-char="[nt] " style="font-size: 11px;">[nt]</button>
+                                    <button type="button" class="hu-char-btn" data-char="[?]" style="font-size: 11px;">[?]</button>
+                                </div>
+                            </div>
+                            
+                            <div style="margin-top: 10px;">
+                                <div style="font-size: 11px; color: #666; margin-bottom: 6px;">Hungarian characters (click to insert):</div>
+                                <div class="hungarian-chars">
+                                    <div class="hu-row">
+                                        <button type="button" class="hu-char-btn" data-char="á">á</button>
+                                        <button type="button" class="hu-char-btn" data-char="é">é</button>
+                                        <button type="button" class="hu-char-btn" data-char="í">í</button>
+                                        <button type="button" class="hu-char-btn" data-char="ó">ó</button>
+                                        <button type="button" class="hu-char-btn" data-char="ö">ö</button>
+                                        <button type="button" class="hu-char-btn" data-char="ő">ő</button>
+                                        <button type="button" class="hu-char-btn" data-char="ú">ú</button>
+                                        <button type="button" class="hu-char-btn" data-char="ü">ü</button>
+                                        <button type="button" class="hu-char-btn" data-char="ű">ű</button>
+                                    </div>
+                                    <div class="hu-row">
+                                        <button type="button" class="hu-char-btn" data-char="Á">Á</button>
+                                        <button type="button" class="hu-char-btn" data-char="É">É</button>
+                                        <button type="button" class="hu-char-btn" data-char="Í">Í</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ó">Ó</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ö">Ö</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ő">Ő</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ú">Ú</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ü">Ü</button>
+                                        <button type="button" class="hu-char-btn" data-char="Ű">Ű</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label style="font-weight: 600; margin-bottom: 10px;">Flags (optional)</label>
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                    <input type="checkbox" class="flag-checkbox" value="SEGMENTATION_ISSUE" style="margin-right: 8px;">
+                                    <span style="color: #ff9800;"><strong>⚠ Segmentation Issue</strong></span>
+                                    <span style="color: #999; font-size: 12px; margin-left: 8px;">(fixable by tuning)</span>
+                                </label>
+                                <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                    <input type="checkbox" class="flag-checkbox" value="UNUSABLE_SEGMENTATION" style="margin-right: 8px;">
+                                    <span style="color: #f44336;"><strong>✕ Unusable Segmentation</strong></span>
+                                    <span style="color: #999; font-size: 12px; margin-left: 8px;">(ambiguous, overlapping)</span>
+                                </label>
+                                <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                    <input type="checkbox" class="flag-checkbox" value="NOT_TEXT" style="margin-right: 8px;">
+                                    <span style="color: #9c27b0;"><strong>∅ Not Text</strong></span>
+                                    <span style="color: #999; font-size: 12px; margin-left: 8px;">(image, mark, etc)</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="buttons">
+                            <button type="submit" class="btn-submit">Save (Enter)</button>
+                            <button type="button" class="btn-skip" id="skipBtn">Skip (Esc)</button>
+                            <button type="button" class="btn-skip" id="prevBtn" style="display:none; background:#fff3e0; border-color:#ff9800; color:#e65100;">◄ Previous</button>
+                        </div>
+                        
+                        <div id="status" class="status"></div>
+                    </form>
+                {% else %}
+                    <div style="text-align: center;">
+                        <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
+                        <p style="color: #666;">All {{ stats.total }} lines have been annotated.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const lineContainer = document.getElementById('line-container');
+        
+        let currentLineId = {{ line.id if line else 'null' }};
+        let lastSavedLineId = null;
+        
+        // Initial form setup
+        attachFormHandlers();
+        
+        // Global keyboard shortcuts (Escape works anywhere)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                loadNext();
+            }
+        });
+        
+        function attachCharButtonHandlers() {
+            const textArea = document.getElementById('correctedText');
+            if (!textArea) return; // May not exist yet
+            
+            document.querySelectorAll('.hu-char-btn').forEach(btn => {
+                btn.removeEventListener('click', charButtonClickHandler);
+                btn.addEventListener('click', charButtonClickHandler);
+            });
+        }
+        
+        function charButtonClickHandler(e) {
+            e.preventDefault();
+            const textArea = document.getElementById('correctedText');
+            const char = e.currentTarget.dataset.char;
+            textArea.value += char;
+            textArea.focus();
+        }
+        
+        async function submitAnnotation() {
+            const textArea = document.getElementById('correctedText');
+            const statusDiv = document.getElementById('status');
+            if (!textArea || !statusDiv) return;
+            
+            const correctedText = textArea.value.trim();
+            const flags = Array.from(document.querySelectorAll('.flag-checkbox:checked')).map(cb => cb.value);
+            
+            if (!correctedText && !flags.length) {
+                statusDiv.textContent = 'Please enter corrected text or select a flag';
+                statusDiv.className = 'status error';
+                return;
+            }
+            
+            statusDiv.textContent = 'Saving...';
+            statusDiv.className = 'status saving';
+            
+            try {
+                const response = await fetch('/annotate/api/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        line_id: currentLineId,
+                        corrected_text: correctedText,
+                        flags: flags,
+                    }),
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Save failed');
+                }
+                
+                const data = await response.json();
+                
+                lastSavedLineId = currentLineId;
+                statusDiv.textContent = '✓ Saved! Loading next...';
+                statusDiv.className = 'status success';
+                
+                updateStats(data.stats);
+                
+                setTimeout(loadNext, 400);
+            } catch (err) {
+                statusDiv.textContent = 'Error: ' + err.message;
+                statusDiv.className = 'status error';
+            }
+        }
+        
+        function attachFormHandlers() {
+            const textArea = document.getElementById('correctedText');
+            const form = document.getElementById('annotationForm');
+            const skipBtn = document.getElementById('skipBtn');
+            const prevBtn = document.getElementById('prevBtn');
+            
+            if (!form || !textArea || !skipBtn) return;
+            
+            // Character insertion buttons
+            attachCharButtonHandlers();
+            
+            // Form submission
+            form.removeEventListener('submit', submitAnnotationHandler);
+            form.addEventListener('submit', submitAnnotationHandler);
+            
+            // Enter on textarea = save; Shift+Enter = newline
+            textArea.removeEventListener('keydown', textAreaKeyHandler);
+            textArea.addEventListener('keydown', textAreaKeyHandler);
+            
+            // Skip button
+            skipBtn.removeEventListener('click', skipHandler);
+            skipBtn.addEventListener('click', skipHandler);
+            
+            // Previous button
+            if (prevBtn) {
+                prevBtn.style.display = lastSavedLineId ? 'inline-block' : 'none';
+                prevBtn.removeEventListener('click', prevHandler);
+                prevBtn.addEventListener('click', prevHandler);
+            }
+        }
+        
+        function textAreaKeyHandler(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitAnnotation();
+            }
+        }
+        
+        function prevHandler() {
+            if (lastSavedLineId) {
+                window.location.href = '/annotate/edit/' + lastSavedLineId;
+            }
+        }
+        
+        function submitAnnotationHandler(e) {
+            e.preventDefault();
+            submitAnnotation();
+        }
+        
+        function skipHandler() {
+            loadNext();
+        }
+        
+        async function loadNext() {
+            try {
+                const response = await fetch('/annotate/api/next');
+                const data = await response.json();
+                
+                if (data.done) {
+                    lineContainer.innerHTML = `
+                        <div style="text-align: center;">
+                            <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
+                            <p style="color: #666;">All ${data.stats.total} lines have been annotated.</p>
+                        </div>
+                    `;
+                } else {
+                    currentLineId = data.line.id;
+                    lineContainer.innerHTML = `
+                        <div class="img-stack">
+                            <div>
+                                <div class="img-label">Original</div>
+                                <img src="${getImageUrl(data.line.crop_path)}" alt="Line">
+                            </div>
+                            <div>
+                                <div class="img-label">2× magnified</div>
+                                <div class="img-2x-wrap">
+                                    <img src="${getImageUrl(data.line.crop_path)}" alt="Line">
+                                </div>
+                            </div>
+                            <div>
+                                <div class="img-label">Context</div>
+                                <img src="/annotate/api/context/${data.line.id}" alt="Context">
+                            </div>
+                        </div>
+                        
+                        <div class="ocr-box">
+                            <div class="ocr-label">
+                                <span>Current OCR</span>
+                                <span class="confidence-badge">${data.line.confidence} conf</span>
+                            </div>
+                            <div class="ocr-text">${escapeHtml(data.line.ocr_text)}</div>
+                        </div>
+                        
+                        <form id="annotationForm">
+                            <div class="form-group">
+                                <label for="correctedText">Corrected Text</label>
+                                <textarea id="correctedText" placeholder="Enter corrected text..." autofocus></textarea>
+                                <div class="shortcut-info">Enter to save · Shift+Enter for newline · Esc to skip</div>
+                                
+                                <div class="hints-box">
+                                    <strong>Markers:</strong>
+                                    <code>[ur]</code> = unreadable &nbsp;
+                                    <code>[nt]</code> = not text &nbsp;
+                                    <code>[?]</code> = uncertain
+                                    <div style="margin-top: 8px; display: flex; gap: 6px;">
+                                        <button type="button" class="hu-char-btn" data-char="[ur] " style="font-size: 11px;">[ur]</button>
+                                        <button type="button" class="hu-char-btn" data-char="[nt] " style="font-size: 11px;">[nt]</button>
+                                        <button type="button" class="hu-char-btn" data-char="[?]" style="font-size: 11px;">[?]</button>
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top: 10px;">
+                                    <div style="font-size: 11px; color: #666; margin-bottom: 6px;">Hungarian characters (click to insert):</div>
+                                    <div class="hungarian-chars">
+                                        <div class="hu-row">
+                                            <button type="button" class="hu-char-btn" data-char="á">á</button>
+                                            <button type="button" class="hu-char-btn" data-char="é">é</button>
+                                            <button type="button" class="hu-char-btn" data-char="í">í</button>
+                                            <button type="button" class="hu-char-btn" data-char="ó">ó</button>
+                                            <button type="button" class="hu-char-btn" data-char="ö">ö</button>
+                                            <button type="button" class="hu-char-btn" data-char="ő">ő</button>
+                                            <button type="button" class="hu-char-btn" data-char="ú">ú</button>
+                                            <button type="button" class="hu-char-btn" data-char="ü">ü</button>
+                                            <button type="button" class="hu-char-btn" data-char="ű">ű</button>
+                                        </div>
+                                        <div class="hu-row">
+                                            <button type="button" class="hu-char-btn" data-char="Á">Á</button>
+                                            <button type="button" class="hu-char-btn" data-char="É">É</button>
+                                            <button type="button" class="hu-char-btn" data-char="Í">Í</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ó">Ó</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ö">Ö</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ő">Ő</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ú">Ú</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ü">Ü</button>
+                                            <button type="button" class="hu-char-btn" data-char="Ű">Ű</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label style="font-weight: 600; margin-bottom: 10px;">Flags (optional)</label>
+                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                                    <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                        <input type="checkbox" class="flag-checkbox" value="SEGMENTATION_ISSUE" style="margin-right: 8px;">
+                                        <span style="color: #ff9800;"><strong>⚠ Segmentation Issue</strong></span>
+                                        <span style="color: #999; font-size: 12px; margin-left: 8px;">(fixable by tuning)</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                        <input type="checkbox" class="flag-checkbox" value="UNUSABLE_SEGMENTATION" style="margin-right: 8px;">
+                                        <span style="color: #f44336;"><strong>✕ Unusable Segmentation</strong></span>
+                                        <span style="color: #999; font-size: 12px; margin-left: 8px;">(ambiguous, overlapping)</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; font-weight: 400; margin: 0;">
+                                        <input type="checkbox" class="flag-checkbox" value="NOT_TEXT" style="margin-right: 8px;">
+                                        <span style="color: #9c27b0;"><strong>∅ Not Text</strong></span>
+                                        <span style="color: #999; font-size: 12px; margin-left: 8px;">(image, mark, etc)</span>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="buttons">
+                                <button type="submit" class="btn-submit">Save (Enter)</button>
+                                <button type="button" class="btn-skip" id="skipBtn">Skip (Esc)</button>
+                                <button type="button" class="btn-skip" id="prevBtn" style="display:none; background:#fff3e0; border-color:#ff9800; color:#e65100;">◄ Previous</button>
+                            </div>
+                            
+                            <div id="status" class="status"></div>
+                        </form>
+                    `;
+                    
+                    // Reattach handlers
+                    attachFormHandlers();
+                }
+                
+                updateStats(data.stats);
+            } catch (err) {
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.textContent = 'Error loading next: ' + err.message;
+                    statusDiv.className = 'status error';
+                }
+                console.error('Error loading next:', err);
+            }
+        }
+        
+        function updateStats(stats) {
+            document.getElementById('progress').textContent = stats.progress;
+            document.getElementById('annotated').textContent = stats.annotated;
+            document.getElementById('remaining').textContent = stats.remaining;
+            document.getElementById('progressBar').style.width = stats.percent + '%';
+        }
+        
+        function getImageUrl(path) {
+            // Handle absolute paths
+            if (path.startsWith('/')) return path;
+            // Prepend working/line_crops/ prefix
+            return '/working/line_crops/' + path;
+        }
+        
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        // Initial focus
+        if (textArea) textArea.focus();
+    </script>
+</body>
+</html>

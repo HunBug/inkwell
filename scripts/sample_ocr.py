@@ -25,6 +25,7 @@ def generate_sample_html(
     output_path: Path,
     sample_size: int = 30,
     transcription_type: str = "OCR_AUTO",
+    model_key: str | None = None,
 ) -> None:
     """Generate HTML page with random OCR samples."""
     conn = get_connection(db_path)
@@ -32,13 +33,13 @@ def generate_sample_html(
     line_crops_dir = working_dir / "line_crops"
 
     # Get random sample of OCR'd lines
-    rows = conn.execute(
-        """
+    query = """
         SELECT
             t.line_id,
             t.text,
             t.confidence,
             t.model_version,
+            t.created_by,
             t.created_at,
             l.page_id,
             l.line_order,
@@ -47,11 +48,17 @@ def generate_sample_html(
         FROM transcriptions t
         JOIN lines l ON l.id = t.line_id
         WHERE t.transcription_type = ?
-        ORDER BY RANDOM()
-        LIMIT ?
-        """,
-        (transcription_type, sample_size),
-    ).fetchall()
+    """
+    params: list[object] = [transcription_type]
+
+    if model_key:
+        query += " AND t.created_by = ?"
+        params.append(model_key)
+
+    query += " ORDER BY RANDOM() LIMIT ?"
+    params.append(sample_size)
+
+    rows = conn.execute(query, params).fetchall()
 
     if not rows:
         print(f"No transcriptions found with type '{transcription_type}'")
@@ -150,7 +157,8 @@ def generate_sample_html(
     <div class="stats">
         <strong>Sample size:</strong> """ + str(len(rows)) + """ lines (random)<br>
         <strong>Transcription type:</strong> """ + transcription_type + """<br>
-        <strong>Database:</strong> """ + str(db_path) + """
+        <strong>Database:</strong> """ + str(db_path) + """<br>
+        <strong>Model filter:</strong> """ + (model_key or "(all models)") + """
     </div>
 """
     ]
@@ -160,6 +168,7 @@ def generate_sample_html(
         text = row["text"] or ""
         confidence = row["confidence"]
         model_version = row["model_version"]
+        created_by = row["created_by"]
         page_id = row["page_id"]
         line_order = row["line_order"]
         crop_path = row["crop_image_path"]
@@ -207,6 +216,9 @@ def generate_sample_html(
                 </div>
                 <div class="meta-item">
                     <span class="meta-label">Model:</span> {model_version}
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Engine:</span> {created_by}
                 </div>
             </div>
             <div>
@@ -259,6 +271,11 @@ def main() -> None:
         default="OCR_AUTO",
         help="Transcription type to sample",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional OCR engine filter (e.g. easyocr, trocr)",
+    )
 
     args = parser.parse_args()
 
@@ -267,6 +284,7 @@ def main() -> None:
         output_path=Path(args.output),
         sample_size=args.size,
         transcription_type=args.type,
+        model_key=args.model,
     )
 
 

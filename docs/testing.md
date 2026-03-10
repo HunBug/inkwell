@@ -159,3 +159,118 @@ Use this template for each new feature/fix:
 ### Actual result / notes
 - Compatibility strategy implemented to prevent `torch`/`kraken` resolver conflict
 - If full Kraken segmentation is needed later, use a dedicated older Python environment (recommended: 3.10)
+
+## 2026-03-10 — Multi-model OCR testing (EasyOCR + TrOCR) + visual comparison
+
+### What changed
+- OCR pipeline supports multiple model backends via `--model`
+- Implemented per-model resume/skip logic (`created_by`) so different engines can run on the same lines
+- Added visual sampler filter by model (`scripts/sample_ocr.py --model ...`)
+
+### How to test
+1. Activate project venv:
+	```bash
+	source .venv/bin/activate
+	```
+2. Install OCR model dependencies (if not already installed):
+	```bash
+	pip install -r requirements.txt
+	pip install -r requirements-ml.txt
+	pip install transformers sentencepiece
+	```
+3. Run EasyOCR sample batch:
+	```bash
+	python scripts/run_pipeline.py ocr --model easyocr --limit 50
+	```
+4. Run TrOCR sample batch (first run downloads model weights, can take time):
+	```bash
+	python scripts/run_pipeline.py ocr --model trocr --limit 50
+	```
+5. Generate model-specific visual sample pages:
+	```bash
+	python scripts/sample_ocr.py --model easyocr --size 30 --output working/ocr_sample_easyocr.html
+	python scripts/sample_ocr.py --model trocr --size 30 --output working/ocr_sample_trocr.html
+	```
+6. Open results in browser:
+	- `working/ocr_sample_easyocr.html`
+	- `working/ocr_sample_trocr.html`
+7. Compare DB counts per model:
+	```bash
+	sqlite3 working/inkwell.db "SELECT created_by, COUNT(*) FROM transcriptions WHERE transcription_type='OCR_AUTO' GROUP BY created_by ORDER BY created_by;"
+	```
+8. Compare latest outputs side-by-side in terminal:
+	```bash
+	sqlite3 working/inkwell.db "SELECT created_by, model_version, line_id, substr(text,1,120) FROM transcriptions WHERE transcription_type='OCR_AUTO' ORDER BY id DESC LIMIT 30;"
+	```
+
+### Expected result
+- EasyOCR and TrOCR both run without schema conflicts
+- `transcriptions` contains rows for both `created_by='easyocr'` and `created_by='trocr'`
+- Visual samples render line image + OCR text for each model
+- Re-running one model without `--force` skips lines already processed by that same model only
+
+### Actual result / notes
+- EasyOCR run completed and wrote rows under `created_by='easyocr'`
+- TrOCR pipeline is wired and executable; first run may spend significant time downloading checkpoint weights
+- If TrOCR is interrupted during first download, rerun the same command to continue once cache is populated
+
+## 2026-03-10 — Getting Hungarian TrOCR checkpoint (OCR_HU_Tra2022) and testing in Inkwell
+
+### What changed
+- Added support for custom TrOCR checkpoint IDs via `--model "trocr:<checkpoint_id>"`
+- Added practical steps to acquire Hungarian checkpoint used by OCR_HU_Tra2022
+- Added test commands to compare default TrOCR vs Hungarian checkpoint
+
+### How to test
+1. Activate environment and install runtime deps:
+	```bash
+	source .venv/bin/activate
+	pip install -r requirements.txt
+	pip install -r requirements-ml.txt
+	pip install transformers sentencepiece huggingface_hub
+	```
+
+2. Login to Hugging Face (needed if model is gated/private):
+	```bash
+	huggingface-cli login
+	```
+
+3. Checkpoint from OCR_HU_Tra2022 inference script:
+	- Repo inference default points to:
+	  - `AlhitawiMohammed22/trocr_large_lines_v2_1_ft_on_dh-lab`
+
+4. Run baseline TrOCR (English-leaning):
+	```bash
+	python scripts/run_pipeline.py ocr --model trocr --limit 50
+	```
+
+5. Run Hungarian checkpoint candidate:
+	```bash
+	python scripts/run_pipeline.py ocr --model "trocr:AlhitawiMohammed22/trocr_large_lines_v2_1_ft_on_dh-lab" --limit 50
+	```
+
+6. If checkpoint access fails (404/403):
+	- request access from model owner profile (`AlhitawiMohammed22`), or
+	- contact listed repo author emails in OCR_HU_Tra2022 README.
+
+7. Generate visual samples per model:
+	```bash
+	python scripts/sample_ocr.py --model "trocr:microsoft/trocr-base-handwritten" --size 30 --output working/ocr_sample_trocr_base.html
+	python scripts/sample_ocr.py --model "trocr:AlhitawiMohammed22/trocr_large_lines_v2_1_ft_on_dh-lab" --size 30 --output working/ocr_sample_trocr_hu.html
+	```
+
+8. Compare model counts and latest rows:
+	```bash
+	sqlite3 working/inkwell.db "SELECT created_by, COUNT(*) FROM transcriptions WHERE transcription_type='OCR_AUTO' GROUP BY created_by ORDER BY created_by;"
+	sqlite3 working/inkwell.db "SELECT created_by, model_version, line_id, substr(text,1,120) FROM transcriptions WHERE transcription_type='OCR_AUTO' ORDER BY id DESC LIMIT 40;"
+	```
+
+### Expected result
+- Hungarian checkpoint is accepted by Inkwell through `trocr:<checkpoint>` syntax
+- OCR rows are stored separately per model in `created_by`
+- Visual sample for Hungarian checkpoint shows more Hungarian-like lexical output than default TrOCR baseline
+
+### Actual result / notes
+- Inference script in OCR_HU_Tra2022 references `AlhitawiMohammed22/trocr_large_lines_v2_1_ft_on_dh-lab`
+- Some project assets/models may be private or moved; authenticated HF access may be required
+- Inkwell now supports direct checkpoint swap without code changes

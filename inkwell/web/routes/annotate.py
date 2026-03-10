@@ -1,0 +1,383 @@
+from __future__ import annotations
+
+import io
+import json
+
+from flask import Blueprint, render_template, request, jsonify, current_app, g, send_file
+from pathlib import Path
+from PIL import Image
+
+from inkwell.db import get_connection, DEFAULT_DB_PATH
+
+
+annotate_bp = Blueprint("annotate", __name__, url_prefix="/annotate")
+
+
+def get_db():
+    """Get database connection for current request."""
+    if "db" not in g:
+        g.db = get_connection(current_app.config.get("DB_PATH"))
+        # Ensure flag column exists (migration)
+        _ensure_flag_column(g.db)
+    return g.db
+
+
+def _ensure_flag_column(db):
+    """Add flag column to transcriptions table if it doesn't exist."""
+    try:
+        cursor = db.execute("PRAGMA table_info(transcriptions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "flag" not in columns:
+            db.execute("ALTER TABLE transcriptions ADD COLUMN flag TEXT")
+            db.commit()
+    except Exception:
+        pass  # Column already exists or other error
+
+
+def _get_random_unannotated_line(db):
+        """Pick one random unannotated line that has OCR output."""
+        return db.execute(
+                """
+                SELECT
+                        l.id as line_id,
+                        l.crop_image_path,
+                        (
+                                SELECT t.text
+                                FROM transcriptions t
+                                WHERE t.line_id = l.id
+                                    AND t.transcription_type = 'OCR_AUTO'
+                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
+                                LIMIT 1
+                        ) as ocr_text,
+                        (
+                                SELECT t.confidence
+                                FROM transcriptions t
+                                WHERE t.line_id = l.id
+                                    AND t.transcription_type = 'OCR_AUTO'
+                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
+                                LIMIT 1
+                        ) as confidence,
+                        (
+                                SELECT t.model_version
+                                FROM transcriptions t
+                                WHERE t.line_id = l.id
+                                    AND t.transcription_type = 'OCR_AUTO'
+                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
+                                LIMIT 1
+                        ) as model_version
+                FROM lines l
+                WHERE EXISTS (
+                        SELECT 1
+                        FROM transcriptions t
+                        WHERE t.line_id = l.id
+                            AND t.transcription_type = 'OCR_AUTO'
+                )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM transcriptions t2
+                        WHERE t2.line_id = l.id
+                            AND t2.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+                )
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+        ).fetchone()
+
+
+@annotate_bp.route("/api/context/<int:line_id>")
+def api_context(line_id: int):
+    """Return a wider crop of the page image showing context above/below the line."""
+    db = get_db()
+    row = db.execute("""
+        SELECT l.polygon_coords, p.derived_image_path
+        FROM lines l
+        JOIN pages p ON l.page_id = p.id
+        WHERE l.id = ?
+    """, (line_id,)).fetchone()
+
+    if not row:
+        return "", 404
+
+    try:
+        coords = json.loads(row["polygon_coords"])  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+        ys = [pt[1] for pt in coords]
+        y1, y2 = min(ys), max(ys)
+        line_h = y2 - y1
+        padding = max(line_h, 60)  # at least 60px, or one line-height worth of context
+
+        working_dir = DEFAULT_DB_PATH.parent
+        page_path = working_dir / row["derived_image_path"]
+
+        with Image.open(page_path) as img:
+            img_w, img_h = img.size
+            crop_y1 = max(0, y1 - padding)
+            crop_y2 = min(img_h, y2 + padding)
+            cropped = img.crop((0, crop_y1, img_w, crop_y2))
+
+            # Scale down width to max 2400px to keep response fast
+            max_w = 2400
+            if cropped.width > max_w:
+                ratio = max_w / cropped.width
+                new_h = int(cropped.height * ratio)
+                cropped = cropped.resize((max_w, new_h), Image.LANCZOS)
+
+            buf = io.BytesIO()
+            cropped.save(buf, format="JPEG", quality=85)
+            buf.seek(0)
+            return send_file(buf, mimetype="image/jpeg")
+    except Exception as e:
+        current_app.logger.error(f"Context crop failed for line {line_id}: {e}")
+        return "", 500
+
+
+@annotate_bp.route("/")
+def index():
+    """Main annotation interface - shows one line at a time."""
+    db = get_db()
+    row = _get_random_unannotated_line(db)
+    
+    if not row:
+        return render_template("annotate/done.html")
+    
+    stats = get_stats(db)
+    
+    conf = row["confidence"]
+    return render_template(
+        "annotate/index.html",
+        line={
+            "id": row["line_id"],
+            "crop_path": row["crop_image_path"],
+            "ocr_text": row["ocr_text"],
+            "confidence": f"{conf:.1%}" if conf is not None else "N/A",
+            "model": row["model_version"],
+        },
+        stats=stats,
+    )
+
+
+@annotate_bp.route("/api/next")
+def api_next():
+    """Get next line to annotate (AJAX)."""
+    db = get_db()
+    row = _get_random_unannotated_line(db)
+    
+    if not row:
+        return jsonify({"done": True, "stats": get_stats(db)})
+    
+    conf = row["confidence"]
+    return jsonify({
+        "done": False,
+        "line": {
+            "id": row["line_id"],
+            "crop_path": row["crop_image_path"],
+            "ocr_text": row["ocr_text"],
+            "confidence": f"{conf:.1%}" if conf is not None else "N/A",
+            "model": row["model_version"],
+        },
+        "stats": get_stats(db),
+    })
+
+
+@annotate_bp.route("/api/submit", methods=["POST"])
+def api_submit():
+    """Submit corrected text and/or flags."""
+    db = get_db()
+    data = request.get_json()
+    
+    line_id = data.get("line_id")
+    corrected_text = data.get("corrected_text", "").strip()
+    flags = data.get("flags", [])  # Array of flag strings
+    
+    if not line_id:
+        return jsonify({"error": "Missing line_id"}), 400
+    
+    # Must have either text or flags
+    if not corrected_text and not flags:
+        return jsonify({"error": "Must provide corrected text or select a flag"}), 400
+    
+    try:
+        # If text is provided, store as HUMAN_CORRECTED
+        if corrected_text:
+            db.execute(
+                """
+                INSERT INTO transcriptions (line_id, transcription_type, text, confidence, created_by, model_version, flag, immutable)
+                VALUES (?, 'HUMAN_CORRECTED', ?, 1.0, 'human', 'human', ?, 1)
+                """,
+                (line_id, corrected_text, ";".join(flags) if flags else None),
+            )
+        else:
+            # If only flags, store as FLAGGED with empty text
+            db.execute(
+                """
+                INSERT INTO transcriptions (line_id, transcription_type, text, confidence, created_by, model_version, flag, immutable)
+                VALUES (?, 'FLAGGED', '', 0.0, 'human', 'human', ?, 1)
+                """,
+                (line_id, ";".join(flags)),
+            )
+        
+        db.commit()
+        
+        return jsonify({
+            "success": True,
+            "stats": get_stats(db),
+        })
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@annotate_bp.route("/review")
+def review():
+    """View and edit all annotated lines."""
+    db = get_db()
+    page = int(request.args.get("page", 1))
+    per_page = 20
+    offset = (page - 1) * per_page
+    
+    # Get total count
+    count_cursor = db.execute("""
+        SELECT COUNT(*) as total FROM transcriptions 
+        WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+    """)
+    total = count_cursor.fetchone()["total"]
+    total_pages = (total + per_page - 1) // per_page
+    
+    # Get paginated results
+    cursor = db.execute("""
+        SELECT 
+            t.id as trans_id,
+            l.id as line_id,
+            l.crop_image_path,
+            t.text as corrected_text,
+            t.flag,
+            t.transcription_type,
+            t.created_at,
+            (SELECT text FROM transcriptions WHERE line_id = l.id AND transcription_type = 'OCR_AUTO' LIMIT 1) as ocr_text
+        FROM transcriptions t
+        JOIN lines l ON t.line_id = l.id
+        WHERE t.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+        ORDER BY t.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (per_page, offset))
+    
+    items = cursor.fetchall()
+    
+    return render_template(
+        "annotate/review.html",
+        items=items,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+    )
+
+
+@annotate_bp.route("/edit/<int:line_id>")
+def edit(line_id):
+    """Edit an existing annotation."""
+    db = get_db()
+    
+    # Get line info
+    cursor = db.execute("""
+        SELECT 
+            l.id as line_id,
+            l.crop_image_path,
+            t.id as trans_id,
+            t.text as corrected_text,
+            t.flag,
+            t.transcription_type,
+            (SELECT text FROM transcriptions WHERE line_id = l.id AND transcription_type = 'OCR_AUTO' LIMIT 1) as ocr_text
+        FROM lines l
+        LEFT JOIN transcriptions t ON l.id = t.line_id AND t.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+        WHERE l.id = ?
+        LIMIT 1
+    """, (line_id,))
+    
+    row = cursor.fetchone()
+    
+    if not row:
+        return "Line not found", 404
+    
+    return render_template(
+        "annotate/edit.html",
+        line={
+            "id": row["line_id"],
+            "crop_path": row["crop_image_path"],
+            "corrected_text": row["corrected_text"] or "",
+            "flag": row["flag"] or "",
+            "ocr_text": row["ocr_text"],
+            "trans_id": row["trans_id"],
+            "transcription_type": row["transcription_type"],
+        },
+    )
+
+
+@annotate_bp.route("/api/update", methods=["POST"])
+def api_update():
+    """Update an existing annotation."""
+    db = get_db()
+    data = request.get_json()
+    
+    line_id = data.get("line_id")
+    corrected_text = data.get("corrected_text", "").strip()
+    flags = data.get("flags", [])
+    trans_id = data.get("trans_id")
+    
+    if not line_id:
+        return jsonify({"error": "Missing line_id"}), 400
+    
+    try:
+        # Delete old transcription if it exists
+        if trans_id:
+            db.execute("DELETE FROM transcriptions WHERE id = ?", (trans_id,))
+        
+        # Insert new one
+        if corrected_text:
+            db.execute(
+                """
+                INSERT INTO transcriptions (line_id, transcription_type, text, confidence, created_by, model_version, flag, immutable)
+                VALUES (?, 'HUMAN_CORRECTED', ?, 1.0, 'human', 'human', ?, 1)
+                """,
+                (line_id, corrected_text, ";".join(flags) if flags else None),
+            )
+        elif flags:
+            db.execute(
+                """
+                INSERT INTO transcriptions (line_id, transcription_type, text, confidence, created_by, model_version, flag, immutable)
+                VALUES (?, 'FLAGGED', '', 0.0, 'human', 'human', ?, 1)
+                """,
+                (line_id, ";".join(flags)),
+            )
+        
+        db.commit()
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+def get_stats(db) -> dict:
+    """Get current annotation statistics."""
+    total_row = db.execute("""
+        SELECT COUNT(DISTINCT line_id) as total
+        FROM transcriptions
+        WHERE transcription_type = 'OCR_AUTO'
+    """).fetchone()
+
+    annotated_row = db.execute("""
+        SELECT COUNT(DISTINCT line_id) as annotated
+        FROM transcriptions
+        WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+    """).fetchone()
+
+    total = total_row["total"] or 0
+    annotated = annotated_row["annotated"] or 0
+    percent = (annotated / total * 100) if total > 0 else 0
+
+    return {
+        "total": total,
+        "annotated": annotated,
+        "remaining": total - annotated,
+        "percent": percent,
+        "progress": f"{annotated}/{total} ({percent:.1f}%)" if total > 0 else "0/0 (0.0%)",
+    }
