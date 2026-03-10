@@ -20,6 +20,18 @@ def parse_args() -> argparse.Namespace:
         cmd.add_argument("--force", action="store_true")
         cmd.add_argument("--root", default=None)
         cmd.add_argument("--model", default=None)
+        if command == "ocr":
+            cmd.add_argument(
+                "--limit",
+                type=int,
+                default=None,
+                help="Maximum number of lines to OCR in this run",
+            )
+            cmd.add_argument(
+                "--langs",
+                default="hu,en",
+                help="Comma-separated OCR languages for backend (default: hu,en)",
+            )
 
     return parser.parse_args()
 
@@ -68,6 +80,30 @@ def main() -> None:
         print(f"\nSegmentation complete:")
         print(f"  Processed: {stats['processed']} pages")
         print(f"  Total lines extracted: {stats['total_lines']}")
+        print(f"  Errors: {stats['errors']}")
+
+    elif args.command == "ocr":
+        from inkwell.pipeline.ocr import run_ocr
+
+        model = args.model or "easyocr"
+        languages = [part.strip() for part in args.langs.split(",") if part.strip()]
+        print(
+            "Running OCR "
+            f"(model={model}, langs={languages}, page={args.page}, "
+            f"limit={args.limit}, force={args.force})..."
+        )
+        stats = run_ocr(
+            db_path,
+            model=model,
+            languages=languages,
+            page=args.page,
+            limit=args.limit,
+            force=args.force,
+        )
+
+        print("\nOCR complete:")
+        print(f"  Processed: {stats['processed']} lines")
+        print(f"  Empty text: {stats['empty']}")
         print(f"  Errors: {stats['errors']}")
         
     else:

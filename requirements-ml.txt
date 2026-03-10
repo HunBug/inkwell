@@ -4,6 +4,7 @@
 # Hugging Face stack
 transformers>=4.45,<5
 datasets>=3.0,<5
+easyocr>=1.7,<2
 
 # Torch is not yet consistently available on all very-new Python releases.
 # For Python 3.14+, use a dedicated env once wheels are available.
