@@ -5,7 +5,14 @@ Inkwell is a local OCR/annotation pipeline for handwritten notebook pages.
 ## Current Status
 
 - Phase 0: DB schema + asset ingestion complete
-- Phase 1 (in progress): orientation/layout ingest detection + minimal ingest review UI
+- Phase 1: orientation/layout ingest detection + ingest review UI complete
+- Phase 2 (active): annotation workflow implemented and in use
+	- `/annotate` line correction UI
+	- random next-line sampling for unannotated OCR lines
+	- review/edit routes: `/annotate/review`, `/annotate/edit/<line_id>`
+	- context crop endpoint: `/annotate/api/context/<line_id>`
+	- shorthand markers: `[ur]`, `[nt]`, `[?]`
+	- optional flags: `SEGMENTATION_ISSUE`, `UNUSABLE_SEGMENTATION`, `NOT_TEXT`
 
 ## Repo Structure
 
@@ -75,12 +82,19 @@ python scripts/run_web.py --debug
 
 Open:
 - `http://127.0.0.1:5000/ingest`
+- `http://127.0.0.1:5000/annotate/`
 
 If port 5000 is already used:
 
 ```bash
 python scripts/run_web.py --debug --port 5001
 ```
+
+## Annotation Notes
+
+- Progress shows `annotated/total (percent)` where total is distinct OCR lines.
+- Human annotation writes immutable rows (`immutable=1`).
+- Queue excludes lines already marked `HUMAN_CORRECTED` or `FLAGGED`.
 
 ## Testing Docs
 

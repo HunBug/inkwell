@@ -60,7 +60,7 @@ Inkwell is a local-first OCR pipeline for one fixed diary dataset. The goal is t
 ## 4.1 Components
 - **SQLite DB**: single source of truth.
 - **Pipeline scripts**: ingest, preprocess, segment, ocr, finetune, export.
-- **Flask app**: two routes in V1 (`/ingest`, `/annotate`).
+- **Flask app**: `/ingest`, `/annotate`, plus annotation support routes (`/annotate/review`, `/annotate/edit/<line_id>`, `/annotate/api/*`).
 - **Working directory**: derived images and line crops.
 
 ## 4.2 Data flow
@@ -210,6 +210,17 @@ Only two routes are mandatory in V1.
 - progress indicator (corrected count).
 
 No additional pages are required for V1 completion.
+
+### Implemented deviations/decisions (2026-03-10)
+
+- `transcription_type='OCR_AUTO'` is used in implementation (instead of `OCR_RAW` naming in older plan text).
+- Annotation queue currently uses **random unannotated-line sampling**.
+- Annotation helper routes are implemented and in use (`review`, `edit`, `update`, context image endpoint).
+- Progress uses distinct line counts to avoid multi-model overcounting.
+- Marker shorthand for annotation speed is standardized in UI:
+  - `[ur]` unreadable,
+  - `[nt]` not text,
+  - `[?]` uncertain.
 
 ---
 

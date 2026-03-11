@@ -4,6 +4,40 @@
 
 ---
 
+## Implementation Snapshot (2026-03-10)
+
+This section reflects what is currently implemented in code (not just planned):
+
+- `/annotate` exists and is actively used for human correction.
+- Annotation queue now samples **random unannotated lines** (not sequential per page).
+- Main annotation view includes 3 stacked image views:
+  - original crop,
+  - 2x magnified crop,
+  - context crop (`/annotate/api/context/<line_id>`) derived from page + polygon coordinates.
+- Marker shorthand is standardized for speed:
+  - `[ur]` = unreadable,
+  - `[nt]` = not text,
+  - `[?]` = uncertain.
+- Marker buttons and Hungarian diacritic helper buttons are available in UI.
+- Optional flags are supported and stored in `transcriptions.flag`:
+  - `SEGMENTATION_ISSUE`,
+  - `UNUSABLE_SEGMENTATION`,
+  - `NOT_TEXT`.
+- Review/edit flow exists:
+  - `/annotate/review` list,
+  - `/annotate/edit/<line_id>` editor,
+  - `/annotate/api/update` endpoint.
+- Progress stats were fixed to use **distinct line counts** (multi-model OCR rows no longer inflate counts).
+- Progress is displayed as both `annotated/total` and percentage.
+- Human annotation inserts now set `immutable=1`.
+
+Current known state:
+
+- `dataset_splits` table exists but is not yet populated/used in annotation routing.
+- Annotation currently runs over all OCR-available lines in DB, independent of split assignment.
+
+---
+
 ## What's Complete (Phase 0 + Phase 1 partial)
 
 ✅ Database schema with immutable triggers  
