@@ -1,10 +1,10 @@
-# Inkwell V1 Execution Plan — Updated (2026-03-10)
+# Inkwell V1 Execution Plan — Updated (2026-03-11)
 
 **Status:** Active development plan incorporating multi-model evaluation strategy
 
 ---
 
-## Implementation Snapshot (2026-03-10)
+## Implementation Snapshot (2026-03-11)
 
 This section reflects what is currently implemented in code (not just planned):
 
@@ -33,22 +33,41 @@ This section reflects what is currently implemented in code (not just planned):
 
 Current known state:
 
-- `dataset_splits` table exists but is not yet populated/used in annotation routing.
-- Annotation currently runs over all OCR-available lines in DB, independent of split assignment.
+- preprocessing / page splitting / rotation were run on the full source set,
+- line segmentation was run across the corpus,
+- OCR infrastructure works and full-source OCR has now been run by the user,
+- annotation is ongoing (roughly first 50 corrected lines collected),
+- `dataset_splits` table exists but is not yet populated/used in annotation routing,
+- annotation currently runs over all OCR-available lines in DB, independent of split assignment.
+
+## New-session handoff summary
+
+If a new LLM session starts, it should assume:
+
+1. The annotation UI is functional and currently the main active workflow.
+2. Human labels are being collected in `transcriptions` as immutable rows.
+3. The next engineering tasks are **not** more annotation UX, but data-pipeline tasks around:
+  - frozen page-level dataset splits,
+  - GT export,
+  - baseline evaluation,
+  - model research / comparison,
+  - fine-tuning.
+4. Archived docs should be ignored unless explicitly needed for historical context.
 
 ---
 
-## What's Complete (Phase 0 + Phase 1 partial)
+## What's Complete
 
 ✅ Database schema with immutable triggers  
 ✅ Asset ingestion (idempotent, 498 images confirmed)  
 ✅ `/ingest` UI (orientation/layout confirmation with full UX)  
 ✅ Preprocessing (rotate, deskew, split doubles - quality validated)  
 ✅ Line segmentation (CV projection baseline - 798 pages, 15,965 lines)  
-✅ OCR infrastructure (EasyOCR baseline - pluggable backend, resumable)  
+✅ OCR infrastructure (EasyOCR + TrOCR support, pluggable backend, resumable)  
 ✅ Visual sampling tool (`scripts/sample_ocr.py`)  
+✅ Annotation UI, review/edit flow, helper buttons, flags, random queue  
 
-**Current state:** EasyOCR baseline quality is poor but pipeline works end-to-end.
+**Current state:** pipeline works end-to-end; the active bottleneck is label collection and model selection quality.
 
 ---
 
@@ -229,24 +248,20 @@ python scripts/run_pipeline.py finetune --model paddleocr --checkpoint run1
 
 ## Implementation Priorities (Immediate Next Steps)
 
-### **Priority 1: Export + Multi-Model OCR Setup**
-1. Implement export pipeline (simple text output)
-2. Add TrOCR backend to `inkwell/pipeline/ocr.py`
-3. Run TrOCR on same 50 lines as EasyOCR baseline
-4. Generate comparison sample HTML showing both model outputs
-5. Assess if TrOCR is worth pursuing or try PaddleOCR
+### **Priority 1: Data discipline before training**
+1. Assign page-level dataset splits and freeze them
+2. Make annotation / export split-aware
+3. Export GT-ready corrected data from immutable human labels
 
-### **Priority 2: GT Storage + Annotation UI**
-6. Implement `ground_truth_lines` table and matching logic
-7. Build `/annotate` route (line crop + multi-model results + text input)
-8. Annotate 50 lines as proof-of-concept
-9. Verify GT matching survives segmentation parameter tweaks
+### **Priority 2: Model research and bake-off**
+4. Research Hungarian handwriting-capable pretrained checkpoints
+5. Run small bake-off on corrected lines (CER/WER)
+6. Pick best base model for fine-tuning
 
-### **Priority 3: Fine-Tuning + Evaluation**
-10. Assign page-level dataset splits
-11. Fine-tune best-performing model(s) from Priority 1
-12. Generate evaluation report comparing baseline vs fine-tuned
-13. Decide on production OCR configuration
+### **Priority 3: Fine-tuning + evaluation**
+7. Fine-tune selected base model on train split
+8. Evaluate on frozen validation split
+9. Compare against current baseline OCR
 
 ---
 
@@ -299,6 +314,6 @@ python scripts/run_pipeline.py finetune --model paddleocr --checkpoint run1
 
 ## Next Session Starting Point
 
-**Immediate action:** Implement TrOCR backend and run side-by-side comparison with EasyOCR on 50 lines to assess if it's worth the investment before building annotation UI.
+**Immediate action:** keep annotating toward ~200 corrected lines while implementing split assignment + GT export in parallel.
 
-**Rationale:** No point building multi-model annotation UI if TrOCR isn't meaningfully better than current EasyOCR baseline. Validate model quality before committing to full annotation loop.
+**Rationale:** annotation is already working; the next risk is not UX, but keeping data clean and evaluation leakage-free before training starts.

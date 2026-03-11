@@ -385,8 +385,9 @@ V1 is complete when all are true:
 3. build minimal `/ingest` for orientation/layout confirmation,
 4. implement preprocess + segment + OCR,
 5. export and inspect first notebook text,
-6. implement `/annotate`, collect first 200 corrections,
-7. run first fine-tune and compare CER,
-8. decide next step using decision gates.
+6. continue annotation until first meaningful milestone (~200 corrections),
+7. assign frozen page-level splits and export GT-ready data,
+8. run first fine-tune and compare CER,
+9. decide next step using decision gates.
 
 This checklist is the default operating plan unless explicitly revised.

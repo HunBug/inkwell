@@ -13,13 +13,20 @@ Inkwell is a local OCR/annotation pipeline for handwritten notebook pages.
 	- context crop endpoint: `/annotate/api/context/<line_id>`
 	- shorthand markers: `[ur]`, `[nt]`, `[?]`
 	- optional flags: `SEGMENTATION_ISSUE`, `UNUSABLE_SEGMENTATION`, `NOT_TEXT`
+	- immutable human annotations
+
+Current working direction:
+- full-source preprocessing and segmentation are complete,
+- full OCR coverage is expected/active after the latest full OCR run,
+- annotation is ongoing,
+- next engineering steps are split assignment, GT export, model comparison, and fine-tuning.
 
 ## Repo Structure
 
 - `inkwell/` — Python package (db, config, pipeline, web)
 - `scripts/` — operational scripts
 - `working/` — runtime artifacts (DB, derived files)
-- `docs/` — implementation and testing documentation
+- `docs/` — current implementation, roadmap, and handoff documentation
 
 ## Prerequisites
 
@@ -96,11 +103,43 @@ python scripts/run_web.py --debug --port 5001
 - Human annotation writes immutable rows (`immutable=1`).
 - Queue excludes lines already marked `HUMAN_CORRECTED` or `FLAGGED`.
 
-## Testing Docs
+## Full Pipeline Commands
 
-Use `docs/testing.md` as the tester playbook + append-only change log.
-Every feature/fix should add a new entry there with:
-- what changed
-- exact test steps
-- expected result
-- actual result / notes
+Initialize DB and assets:
+
+```bash
+python scripts/init_db.py --config notebooks_config.json
+```
+
+Run ingest detection:
+
+```bash
+python scripts/run_pipeline.py ingest
+```
+
+Preprocess full source (rotation, deskew, split double pages):
+
+```bash
+python scripts/run_pipeline.py preprocess --force
+```
+
+Segment full source into lines:
+
+```bash
+python scripts/run_pipeline.py segment --force
+```
+
+Run OCR on all segmented lines:
+
+```bash
+python scripts/run_pipeline.py ocr --model easyocr --langs hu,en
+```
+
+## Live Docs To Read First
+
+For a new session, these are the important current docs:
+
+- `docs/inkwell_plan_final.md` — canonical architecture and project rules
+- `docs/execution_plan_v1_updated.md` — current implementation snapshot + next roadmap
+- `docs/gt_storage_design.md` — selected ground-truth storage approach
+
