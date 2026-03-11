@@ -1,0 +1,41 @@
+# Inkwell automation config
+# Edit this once, then you can run:
+#   python scripts/run_automation.py
+
+[shared]
+# Shared folder visible from the dev machine.
+path = "/home/akoss/mnt/lara-playground/playground/inkwell-automation"
+
+[gpu]
+# Used for ping precheck and OPTIONAL SSH/rsync cache sync.
+host = "NeoLinux"
+user = "hunbug"
+# Optional SSH port.
+port = 22
+# Remote dataset cache root on the GPU machine. The launcher can rsync the selected dataset here.
+remote_dataset_cache_root = "~/work/inkwell-datasets"
+
+[prechecks]
+require_ping = true
+require_worker_heartbeat = false
+worker_heartbeat_max_age_seconds = 120
+require_no_active_jobs = true
+
+[dataset]
+# Reused by default. Change this when you want a new frozen export.
+dataset_id = "gt_20260311"
+# If false and the dataset folder already exists, it is reused as-is.
+force_reexport = false
+# If true, the launcher will rsync the chosen dataset to gpu.remote_dataset_cache_root
+# using ssh user@host. If your worker reads directly from shared.path, set this to false.
+sync_to_gpu_cache = false
+
+[job]
+type = "finetune"  # or "eval"
+label = "default-finetune"
+base_model = "microsoft/trocr-base-handwritten"
+resume_from = ""
+eval_checkpoint = ""
+epochs = 10
+batch_size = 8
+learning_rate = 5e-5

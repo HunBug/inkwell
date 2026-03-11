@@ -16,11 +16,42 @@
             background: #f5f5f5;
             color: #333;
         }
+
+        .top-nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background: #2c3e50;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 20;
+        }
+
+        .top-nav .brand {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .top-nav .links a {
+            color: #3498db;
+            text-decoration: none;
+            margin-left: 14px;
+            font-size: 14px;
+        }
+
+        .top-nav .links a:hover {
+            text-decoration: underline;
+        }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 76px 20px 20px;
         }
         
         h1 {
@@ -158,6 +189,16 @@
     </style>
 </head>
 <body>
+    <div class="top-nav">
+        <div class="brand">Inkwell — OCR Pipeline</div>
+        <div class="links">
+            <a href="/">Home</a>
+            <a href="/ingest">Ingest</a>
+            <a href="/annotate">Annotate</a>
+            <a href="/jobs">Jobs</a>
+            <a href="/db">DB</a>
+        </div>
+    </div>
     <div class="container">
         <a href="/annotate" class="back-link">← Back to Annotate</a>
         

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Inkwell{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Inkwell</h2>
+<p style="margin-bottom: 1rem; color:#555;">Local OCR, annotation, and training orchestration.</p>
+<ul style="line-height:1.9; margin-left:1.2rem;">
+    <li><a href="/ingest">Ingestion Review</a></li>
+    <li><a href="/annotate">Line Annotation</a></li>
+    <li><a href="/jobs">Training Control Panel</a></li>
+    <li><a href="/db">Database Viewer</a></li>
+</ul>
+{% endblock %}

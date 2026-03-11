@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS dataset_splits (
   UNIQUE(page_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_lines_skip_id
+ON lines(skip, id);
+
+CREATE INDEX IF NOT EXISTS idx_transcriptions_type_line
+ON transcriptions(transcription_type, line_id);
+
+CREATE INDEX IF NOT EXISTS idx_transcriptions_line_type_conf_id
+ON transcriptions(line_id, transcription_type, confidence DESC, id DESC);
+
 CREATE TRIGGER IF NOT EXISTS protect_immutable_transcriptions_update
 BEFORE UPDATE ON transcriptions
 WHEN OLD.immutable = 1

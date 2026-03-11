@@ -19,6 +19,7 @@ def get_db():
         g.db = get_connection(current_app.config.get("DB_PATH"))
         # Ensure flag column exists (migration)
         _ensure_flag_column(g.db)
+        _ensure_annotation_indexes(g.db)
     return g.db
 
 
@@ -34,54 +35,61 @@ def _ensure_flag_column(db):
         pass  # Column already exists or other error
 
 
+def _ensure_annotation_indexes(db):
+    """Add annotation-related indexes if they do not exist yet."""
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_lines_skip_id
+        ON lines(skip, id);
+
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_type_line
+        ON transcriptions(transcription_type, line_id);
+
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_line_type_conf_id
+        ON transcriptions(line_id, transcription_type, confidence DESC, id DESC);
+        """
+    )
+    db.commit()
+
+
 def _get_random_unannotated_line(db):
-        """Pick one random unannotated line that has OCR output."""
-        return db.execute(
-                """
-                SELECT
-                        l.id as line_id,
-                        l.crop_image_path,
-                        (
-                                SELECT t.text
-                                FROM transcriptions t
-                                WHERE t.line_id = l.id
-                                    AND t.transcription_type = 'OCR_AUTO'
-                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
-                                LIMIT 1
-                        ) as ocr_text,
-                        (
-                                SELECT t.confidence
-                                FROM transcriptions t
-                                WHERE t.line_id = l.id
-                                    AND t.transcription_type = 'OCR_AUTO'
-                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
-                                LIMIT 1
-                        ) as confidence,
-                        (
-                                SELECT t.model_version
-                                FROM transcriptions t
-                                WHERE t.line_id = l.id
-                                    AND t.transcription_type = 'OCR_AUTO'
-                                ORDER BY COALESCE(t.confidence, -1) DESC, t.id DESC
-                                LIMIT 1
-                        ) as model_version
-                FROM lines l
-                WHERE EXISTS (
-                        SELECT 1
-                        FROM transcriptions t
-                        WHERE t.line_id = l.id
-                            AND t.transcription_type = 'OCR_AUTO'
-                )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM transcriptions t2
-                        WHERE t2.line_id = l.id
-                            AND t2.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
-                )
-                ORDER BY RANDOM()
-                LIMIT 1
-                """
-        ).fetchone()
+    """Pick one random unannotated line that has OCR output."""
+    return db.execute(
+        """
+        WITH candidate AS (
+            SELECT DISTINCT t.line_id
+            FROM transcriptions t
+            JOIN lines l ON l.id = t.line_id
+            WHERE t.transcription_type = 'OCR_AUTO'
+              AND l.skip = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM transcriptions t2
+                  WHERE t2.line_id = t.line_id
+                    AND t2.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+              )
+            ORDER BY RANDOM()
+            LIMIT 1
+        )
+        SELECT
+            l.id AS line_id,
+            l.crop_image_path,
+            best.text AS ocr_text,
+            best.confidence AS confidence,
+            best.model_version AS model_version
+        FROM candidate c
+        JOIN lines l ON l.id = c.line_id
+        JOIN transcriptions best
+          ON best.id = (
+              SELECT t.id
+              FROM transcriptions t
+              WHERE t.line_id = c.line_id
+                AND t.transcription_type = 'OCR_AUTO'
+              ORDER BY t.confidence DESC, t.id DESC
+              LIMIT 1
+          )
+        """
+    ).fetchone()
 
 
 @annotate_bp.route("/api/context/<int:line_id>")

@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Inkwell{% endblock %}
+
+{% block extra_css %}
+<style>
+.jobs-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.jobs-header h2 { font-size: 1.4rem; }
+.shared-path { font-size: 0.8rem; color: #666; font-family: monospace; }
+.worker-status {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    background: white;
+    border: 1px solid #ddd;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.worker-pill {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-weight: 600;
+}
+.worker-pill.running { background: #cce5ff; color: #004085; }
+.worker-pill.idle { background: #d4edda; color: #155724; }
+.worker-pill.unknown { background: #eee; color: #555; }
+
+.control-panel {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border-radius: 6px;
+    background: white;
+    border: 1px solid #ddd;
+}
+.control-title {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+.launcher-pill {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-weight: 600;
+}
+.launcher-pill.running { background: #cce5ff; color: #004085; }
+.launcher-pill.completed { background: #d4edda; color: #155724; }
+.launcher-pill.failed { background: #f8d7da; color: #721c24; }
+.launcher-pill.idle, .launcher-pill.unknown { background: #eee; color: #555; }
+.control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.control-item {
+    border: 1px solid #eee;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+}
+.control-k { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+.control-v { font-size: 0.95rem; font-weight: 600; word-break: break-word; }
+.launch-btn {
+    background: #2ecc71;
+    margin-right: 0.5rem;
+}
+.launch-btn:hover { background: #27ae60; }
+.launch-note {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.job-card {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+}
+.job-card-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid #ddd;
+}
+.job-type-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: #3498db;
+    color: white;
+}
+.job-type-badge.eval { background: #8e44ad; }
+.job-label { font-weight: 600; flex: 1; }
+.job-age  { font-size: 0.8rem; color: #888; }
+
+.status-pill {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-weight: 600;
+}
+.status-pill.pending  { background: #ffeeba; color: #856404; }
+.status-pill.running  { background: #cce5ff; color: #004085; }
+.status-pill.completed{ background: #d4edda; color: #155724; }
+.status-pill.failed   { background: #f8d7da; color: #721c24; }
+.status-pill.cancelled{ background: #e2e3e5; color: #383d41; }
+.status-pill.unknown  { background: #eee;    color: #555; }
+
+.job-body { padding: 1rem; }
+
+.metrics-row {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+.metric { display: flex; flex-direction: column; }
+.metric-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+.metric-value { font-size: 1.1rem; font-weight: 600; }
+.metric-value.good { color: #27ae60; }
+
+.progress-bar-wrap {
+    background: #e9ecef;
+    border-radius: 4px;
+    height: 8px;
+    margin: 0.5rem 0 0.75rem;
+    overflow: hidden;
+}
+.progress-bar-fill {
+    height: 100%;
+    background: #3498db;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.message {
+    font-size: 0.85rem;
+    color: #555;
+    font-style: italic;
+    margin-bottom: 0.5rem;
+}
+
+.log-toggle {
+    font-size: 0.8rem;
+    color: #3498db;
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
+    margin-top: 0.5rem;
+}
+.log-block {
+    display: none;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: monospace;
+    font-size: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+.log-block.open { display: block; }
+
+.cancel-form { display: inline; }
+.cancel-btn {
+    background: #e74c3c;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.8rem;
+}
+.cancel-btn:hover { background: #c0392b; }
+.cancel-label { font-size: 0.8rem; color: #e74c3c; font-style: italic; }
+
+.no-jobs {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 2rem;
+    text-align: center;
+    color: #888;
+}
+.no-jobs code { display: block; margin-top: 0.75rem; font-size: 0.85rem; text-align: left; background: #f5f5f5; padding: 0.75rem; border-radius: 4px; }
+
+.autorefresh-note {
+    font-size: 0.8rem;
+    color: #3498db;
+    margin-bottom: 1rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="jobs-header">
+    <h2>GPU Jobs</h2>
+    <span class="shared-path">{{ shared_path }}</span>
+</div>
+
+<div class="control-panel">
+    <div class="control-title">
+        <strong>Training Control Panel</strong>
+        <span class="launcher-pill {{ launcher.status }}">launcher: {{ launcher.status }}</span>
+        {% if launcher.updated_at %}
+        <span class="launch-note">updated {{ age(launcher.updated_at) }}</span>
+        {% endif %}
+    </div>
+
+    <div style="margin-bottom: 0.75rem;">
+        <form action="/jobs/automation/run" method="post" style="display:inline;">
+            <button class="launch-btn" {% if launcher.status == 'running' %}disabled{% endif %}>
+                Run automation now
+            </button>
+        </form>
+        <span class="launch-note">Runs: prechecks → split freeze → dataset export/reuse → optional sync → submit job</span>
+    </div>
+
+    <div class="control-grid">
+        <div class="control-item">
+            <div class="control-k">Shared Path</div>
+            <div class="control-v">{{ cfg_summary.shared_path or '?' }}</div>
+        </div>
+        <div class="control-item">
+            <div class="control-k">GPU Host</div>
+            <div class="control-v">{{ cfg_summary.gpu_host or '?' }}</div>
+        </div>
+        <div class="control-item">
+            <div class="control-k">Dataset</div>
+            <div class="control-v">{{ cfg_summary.dataset_id or '?' }}</div>
+        </div>
+        <div class="control-item">
+            <div class="control-k">Job Type</div>
+            <div class="control-v">{{ cfg_summary.job_type or '?' }}</div>
+        </div>
+        <div class="control-item">
+            <div class="control-k">Queue</div>
+            <div class="control-v">pending={{ pending_count }} running={{ running_count }}</div>
+        </div>
+        <div class="control-item">
+            <div class="control-k">GPU Cache Sync</div>
+            <div class="control-v">{{ cfg_summary.sync_to_gpu_cache }}</div>
+        </div>
+    </div>
+
+    {% if launcher.log_tail %}
+    <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide launcher log' : 'Show launcher log'">Show launcher log</button>
+    <div class="log-block">{{ launcher.log_tail | join('\n') }}</div>
+    {% endif %}
+</div>
+
+{% if worker_status %}
+<div class="worker-status">
+    <strong>Worker</strong>
+    <span class="worker-pill {{ worker_status.get('status', 'unknown') }}">{{ worker_status.get('status', 'unknown') }}</span>
+    <span>{{ worker_status.get('hostname', '?') }}</span>
+    <span>last seen {{ age(worker_status.get('updated_at', '')) }}</span>
+    {% if worker_status.get('current_job') %}
+    <span>job: {{ worker_status.get('current_job') }}</span>
+    {% endif %}
+    {% if worker_status.get('message') %}
+    <span>{{ worker_status.get('message') }}</span>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if any_running %}
+<p class="autorefresh-note">⟳ Auto-refreshing every 8 seconds (active job detected)</p>
+{% endif %}
+
+{% if not jobs %}
+<div class="no-jobs">
+    <p>No jobs found in the shared folder.</p>
+    <code>python scripts/submit_job.py finetune --dataset-id gt_20260311</code>
+</div>
+{% else %}
+{% for job in jobs %}
+<div class="job-card">
+    <div class="job-card-header">
+        <span class="job-type-badge {% if job.type == 'eval' %}eval{% endif %}">{{ job.type }}</span>
+        <span class="job-label">{{ job.label }}</span>
+        <span class="status-pill {{ job.status }}">{{ job.status }}</span>
+        <span class="job-age">{{ age(job.created_at) }}</span>
+    </div>
+    <div class="job-body">
+        {# ── Metrics row ── #}
+        <div class="metrics-row">
+            <div class="metric">
+                <span class="metric-label">Dataset</span>
+                <span class="metric-value">{{ job.dataset_id }}</span>
+            </div>
+            {% if job.type == 'finetune' %}
+            <div class="metric">
+                <span class="metric-label">Base model</span>
+                <span class="metric-value" style="font-size:0.85rem;">{{ job.base_model.split('/')[-1] }}</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Epochs</span>
+                <span class="metric-value">{{ job.params.get('epochs', '?') }}</span>
+            </div>
+            {% endif %}
+
+            {# Runtime metrics from progress #}
+            {% set p = job.progress %}
+            {% if p.get('epoch') %}
+            <div class="metric">
+                <span class="metric-label">Epoch</span>
+                <span class="metric-value">{{ p.epoch }} / {{ p.get('total_epochs', '?') }}</span>
+            </div>
+            {% endif %}
+            {% if p.get('train_loss') is not none %}
+            <div class="metric">
+                <span class="metric-label">Train loss</span>
+                <span class="metric-value">{{ "%.4f"|format(p.train_loss) }}</span>
+            </div>
+            {% endif %}
+            {% if p.get('val_loss') is not none %}
+            <div class="metric">
+                <span class="metric-label">Val loss</span>
+                <span class="metric-value">{{ "%.4f"|format(p.val_loss) }}</span>
+            </div>
+            {% endif %}
+
+            {# Final metrics from result #}
+            {% set r = job.result %}
+            {% if r.get('final_val_cer') is not none %}
+            <div class="metric">
+                <span class="metric-label">Val CER</span>
+                <span class="metric-value good">{{ "%.3f"|format(r.final_val_cer) }}</span>
+            </div>
+            {% endif %}
+            {% if r.get('cer') is not none %}
+            <div class="metric">
+                <span class="metric-label">CER ({{ r.get('split','?') }})</span>
+                <span class="metric-value good">{{ "%.3f"|format(r.cer) }}</span>
+            </div>
+            {% endif %}
+            {% if r.get('wer') is not none %}
+            <div class="metric">
+                <span class="metric-label">WER</span>
+                <span class="metric-value">{{ "%.3f"|format(r.wer) }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        {# ── Progress bar (finetune only, when running) ── #}
+        {% if job.type == 'finetune' and job.status == 'running' and p.get('epoch') and p.get('total_epochs') %}
+        {% set pct = (p.epoch / p.total_epochs * 100)|int %}
+        <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" style="width: {{ pct }}%"></div>
+        </div>
+        {% endif %}
+
+        {# ── Eval progress bar ── #}
+        {% if job.type == 'eval' and job.status == 'running' and p.get('done') and p.get('total') %}
+        {% set pct = (p.done / p.total * 100)|int %}
+        <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" style="width: {{ pct }}%"></div>
+        </div>
+        {% endif %}
+
+        {# ── Message ── #}
+        {% if p.get('message') %}
+        <p class="message">{{ p.message }}</p>
+        {% endif %}
+
+        {# ── Cancel / cancel pending ── #}
+        {% if job.cancel_requested %}
+        <span class="cancel-label">Cancellation requested…</span>
+        {% elif job.can_cancel %}
+        <form action="/jobs/{{ job.job_id }}/cancel" method="post" class="cancel-form">
+            <button class="cancel-btn" onclick="return confirm('Cancel this job?')">Cancel</button>
+        </form>
+        {% endif %}
+
+        {# ── Log tail ── #}
+        {% if job.log_tail %}
+        <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide log' : 'Show log'">Show log</button>
+        <div class="log-block">{{ job.log_tail | join('\n') }}</div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if any_running %}
+<script>
+    setTimeout(function(){ location.reload(); }, 8000);
+</script>
+{% endif %}
+{% endblock %}
