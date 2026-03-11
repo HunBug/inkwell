@@ -140,7 +140,12 @@ def main() -> None:
         batch_items.clear()
 
     for i, item in enumerate(tqdm(items, desc=f"Eval ({args.split})")):
-        image = Image.open(crops_dir / item["image"]).convert("RGB")
+        image_rel = Path(item["image"])
+        if image_rel.parts and image_rel.parts[0] == "crops":
+            image_path = crops_dir.parent / image_rel
+        else:
+            image_path = crops_dir / image_rel
+        image = Image.open(image_path).convert("RGB")
         pixel_values = processor(images=image, return_tensors="pt").pixel_values.squeeze(0)
         batch_pixel_values.append(pixel_values)
         batch_items.append(item)

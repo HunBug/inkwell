@@ -22,6 +22,13 @@ This guide explains exactly how to test the automation loop with your current se
 
 In this mode, `gpu.user` is not required for job flow itself.
 
+Important nuance:
+- the **absolute path may differ** between machines,
+- e.g. dev machine: `/home/akoss/.../inkwell-automation`
+- GPU machine: `/home/hunbug/.../inkwell-automation`
+- that is OK, as long as both point to the same shared content.
+- on the GPU machine, set `INKWELL_SHARED` to the server-side path.
+
 ### Optional GPU-cache mode (faster local I/O on GPU)
 - Dev launcher additionally `rsync`s dataset to GPU local path (`remote_dataset_cache_root`)
 - This needs SSH access (`gpu.user`, passkey)
@@ -68,7 +75,7 @@ This avoids accidental local writes when the network mount is missing.
 ### On GPU machine
 1. Ensure CUDA works (`nvidia-smi`)
 2. Install Python deps for training (`requirements-ml.txt` + project deps)
-3. Set `INKWELL_SHARED` to same shared folder path
+3. Set `INKWELL_SHARED` to the shared folder path **as seen on the GPU machine**
 4. Start worker:
    - `python scripts/gpu_worker.py`
    - or with local cache path: `python scripts/gpu_worker.py --local-datasets /path/to/local/datasets`

@@ -256,8 +256,9 @@
     </div>
 
     {% if launcher.log_tail %}
-    <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide launcher log' : 'Show launcher log'">Show launcher log</button>
-    <div class="log-block">{{ launcher.log_tail | join('\n') }}</div>
+    {% set launcher_open = launcher.status in ['running', 'failed'] %}
+    <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide launcher log' : 'Show launcher log'">{{ 'Hide launcher log' if launcher_open else 'Show launcher log' }}</button>
+    <div class="log-block{% if launcher_open %} open{% endif %}">{{ launcher.log_tail | join('\n') }}</div>
     {% endif %}
 </div>
 
@@ -387,8 +388,9 @@
 
         {# ── Log tail ── #}
         {% if job.log_tail %}
-        <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide log' : 'Show log'">Show log</button>
-        <div class="log-block">{{ job.log_tail | join('\n') }}</div>
+        {% set job_open = loop.first or job.status in ['running', 'failed'] %}
+        <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide log' : 'Show log'">{{ 'Hide log' if job_open else 'Show log' }}</button>
+        <div class="log-block{% if job_open %} open{% endif %}">{{ job.log_tail | join('\n') }}</div>
         {% endif %}
     </div>
 </div>

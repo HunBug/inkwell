@@ -59,7 +59,12 @@ class LineOCRDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         item = self.items[idx]
-        image = Image.open(self.crops_dir / item["image"]).convert("RGB")
+        image_rel = Path(item["image"])
+        if image_rel.parts and image_rel.parts[0] == "crops":
+            image_path = self.crops_dir.parent / image_rel
+        else:
+            image_path = self.crops_dir / image_rel
+        image = Image.open(image_path).convert("RGB")
         pixel_values = self.processor(images=image, return_tensors="pt").pixel_values.squeeze(0)
         labels = self.processor.tokenizer(
             item["text"],
@@ -162,7 +167,8 @@ def main() -> None:
     parser.add_argument("--base-model", default="microsoft/trocr-base-handwritten")
     parser.add_argument("--resume-from", default=None, help="Resume from this checkpoint")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--gradient-accumulation", type=int, default=1)
     parser.add_argument("--lr", type=float, default=5e-5)
     args = parser.parse_args()
 
@@ -194,6 +200,12 @@ def main() -> None:
     model.config.decoder_start_token_id = processor.tokenizer.cls_token_id
     model.config.pad_token_id = processor.tokenizer.pad_token_id
     model.config.vocab_size = model.config.decoder.vocab_size
+    model.config.use_cache = False
+
+    try:
+        model.gradient_checkpointing_enable()
+    except Exception:
+        pass
 
     crops_dir = dataset_dir / "crops"
     train_ds = LineOCRDataset(dataset_dir / "train.jsonl", processor, crops_dir)
@@ -202,34 +214,104 @@ def main() -> None:
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}", flush=True)
     write_progress(message=f"Loaded: train={len(train_ds)} val={len(val_ds)}")
 
-    training_args = Seq2SeqTrainingArguments(
-        output_dir=str(checkpoints_dir),
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        learning_rate=args.lr,
-        weight_decay=0.01,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        predict_with_generate=False,
-        logging_steps=10,
-        fp16=torch.cuda.is_available(),
-        report_to="none",  # no wandb/tensorboard by default
-        dataloader_num_workers=2,
-    )
+    def build_training_args(current_batch_size: int) -> Seq2SeqTrainingArguments:
+        return Seq2SeqTrainingArguments(
+            output_dir=str(checkpoints_dir),
+            num_train_epochs=args.epochs,
+            per_device_train_batch_size=current_batch_size,
+            per_device_eval_batch_size=max(1, current_batch_size),
+            gradient_accumulation_steps=max(1, args.gradient_accumulation),
+            learning_rate=args.lr,
+            weight_decay=0.01,
+            eval_strategy="epoch",
+            save_strategy="epoch",
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
+            predict_with_generate=False,
+            logging_steps=10,
+            fp16=torch.cuda.is_available(),
+            report_to="none",  # no wandb/tensorboard by default
+            dataloader_num_workers=0,
+            dataloader_pin_memory=False,
+            optim="adafactor",
+        )
 
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
-        callbacks=[JobProgressCallback(job_dir, args.epochs)],
-    )
+    train_result = None
+    current_batch_size = max(1, args.batch_size)
+    max_oom_retries = 4
+    oom_retry = 0
 
-    train_result = trainer.train()
+    while True:
+        write_progress(
+            status="running",
+            message=(
+                f"Training start (batch={current_batch_size}, "
+                f"grad_accum={max(1, args.gradient_accumulation)})"
+            ),
+            batch_size=current_batch_size,
+            gradient_accumulation=max(1, args.gradient_accumulation),
+            oom_retries=oom_retry,
+        )
+
+        training_args = build_training_args(current_batch_size)
+        trainer = Seq2SeqTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_ds,
+            eval_dataset=val_ds,
+            callbacks=[JobProgressCallback(job_dir, args.epochs)],
+        )
+
+        try:
+            train_result = trainer.train()
+            break
+        except torch.OutOfMemoryError:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            if current_batch_size <= 1 or oom_retry >= max_oom_retries:
+                raise
+
+            oom_retry += 1
+            current_batch_size = max(1, current_batch_size // 2)
+            print(
+                f"[OOM] Retrying with smaller batch size: {current_batch_size}",
+                flush=True,
+            )
+            write_progress(
+                status="running",
+                message=f"OOM encountered, retrying with batch={current_batch_size}",
+                batch_size=current_batch_size,
+                oom_retries=oom_retry,
+            )
+            continue
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "out of memory" not in msg and "cuda" not in msg:
+                raise
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            if current_batch_size <= 1 or oom_retry >= max_oom_retries:
+                raise
+
+            oom_retry += 1
+            current_batch_size = max(1, current_batch_size // 2)
+            print(
+                f"[OOM-like RuntimeError] Retrying with smaller batch size: {current_batch_size}",
+                flush=True,
+            )
+            write_progress(
+                status="running",
+                message=f"OOM-like error, retrying with batch={current_batch_size}",
+                batch_size=current_batch_size,
+                oom_retries=oom_retry,
+            )
+            continue
+
+    assert train_result is not None
 
     # Save best model to checkpoints/best
     best_dir = checkpoints_dir / "best"
@@ -265,6 +347,9 @@ def main() -> None:
         "base_model": args.base_model,
         "resume_from": args.resume_from,
         "epochs": args.epochs,
+        "batch_size": current_batch_size,
+        "gradient_accumulation": max(1, args.gradient_accumulation),
+        "oom_retries": oom_retry,
         "train_runtime_secs": train_result.metrics.get("train_runtime"),
         "final_train_loss": train_result.metrics.get("train_loss"),
         "final_val_cer": val_cer,
@@ -276,6 +361,7 @@ def main() -> None:
     write_progress(
         status="completed",
         val_cer=val_cer,
+        batch_size=current_batch_size,
         message=f"Done. Val CER: {val_cer:.4f}",
     )
 

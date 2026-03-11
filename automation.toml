@@ -12,6 +12,8 @@ host = "NeoLinux"
 user = "hunbug"
 # Optional SSH port.
 port = 22
+# Destination folder on GPU machine for the synced code repository.
+code_destination = "~/work/inkwell"
 # Remote dataset cache root on the GPU machine. The launcher can rsync the selected dataset here.
 remote_dataset_cache_root = "~/work/inkwell-datasets"
 
@@ -28,7 +30,7 @@ dataset_id = "gt_20260311"
 force_reexport = false
 # If true, the launcher will rsync the chosen dataset to gpu.remote_dataset_cache_root
 # using ssh user@host. If your worker reads directly from shared.path, set this to false.
-sync_to_gpu_cache = false
+sync_to_gpu_cache = true
 
 [job]
 type = "finetune"  # or "eval"

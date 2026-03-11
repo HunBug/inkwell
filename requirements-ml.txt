@@ -2,7 +2,7 @@
 # Install only when you need OCR model training/inference components.
 
 # Hugging Face stack
-transformers>=4.45,<5
+transformers[torch]>=4.45,<5
 datasets>=3.0,<5
 easyocr>=1.7,<2
 

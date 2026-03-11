@@ -291,6 +291,15 @@ def submit_job(cfg: dict, shared: Path) -> str:
     job_dir.mkdir(parents=True, exist_ok=False)
 
     dataset_path = str(shared / "datasets" / dataset_id)
+    gpu_cfg = cfg.get("gpu", {})
+    dataset_cfg = cfg.get("dataset", {})
+    remote_cache_root = str(gpu_cfg.get("remote_dataset_cache_root") or "").strip()
+    sync_to_gpu_cache = bool(dataset_cfg.get("sync_to_gpu_cache", False))
+    preferred_dataset_path = (
+        f"{remote_cache_root.rstrip('/')}/{dataset_id}"
+        if sync_to_gpu_cache and remote_cache_root
+        else None
+    )
     resume_from = str(job_cfg.get("resume_from", "") or "").strip()
     eval_checkpoint = str(job_cfg.get("eval_checkpoint", "") or "").strip()
 
@@ -304,12 +313,13 @@ def submit_job(cfg: dict, shared: Path) -> str:
         "created_at": now.isoformat(),
         "dataset_id": dataset_id,
         "dataset_path": dataset_path,
+        "preferred_dataset_path": preferred_dataset_path,
         "base_model": job_cfg.get("base_model", "microsoft/trocr-base-handwritten"),
         "resume_from": resume_from or None,
         "eval_checkpoint": eval_checkpoint or None,
         "params": {
             "epochs": int(job_cfg.get("epochs", 10)),
-            "batch_size": int(job_cfg.get("batch_size", 8)),
+            "batch_size": int(job_cfg.get("batch_size", 2)),
             "learning_rate": float(job_cfg.get("learning_rate", 5e-5)),
         },
     }

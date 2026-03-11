@@ -40,6 +40,30 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL_SECS = 10
 
 
+def _sync_dataset_to_local_cache(shared: Path, dataset_id: str, local_datasets: Path) -> Path:
+    """Rsync one dataset from shared storage to local cache and return local path."""
+    src = shared / "datasets" / dataset_id
+    dst = local_datasets / dataset_id
+
+    if not src.exists():
+        raise FileNotFoundError(f"Shared dataset path not found: {src}")
+
+    dst.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "rsync",
+        "-az",
+        "--delete",
+        f"{str(src)}/",
+        f"{str(dst)}/",
+    ]
+    res = subprocess.run(cmd, text=True, capture_output=True)
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"Dataset rsync failed for {dataset_id}: {res.stderr or res.stdout}"
+        )
+    return dst
+
+
 def write_worker_status(
     shared: Path,
     status: str,
@@ -111,7 +135,37 @@ def find_pending_job(shared: Path) -> Path | None:
     return candidates[0][1]
 
 
-def run_job(job_dir: Path, local_datasets: Path | None) -> None:
+def _resolve_shared_path_on_server(raw_path: str | None, shared: Path) -> str | None:
+    """
+    Translate a client-side shared absolute path to the server-side shared root.
+
+    Example:
+      client job.json may contain
+        /home/akoss/.../inkwell-automation/datasets/gt_20260311
+      while server sees the same shared folder as
+        /home/hunbug/.../inkwell-automation
+
+    In that case we remap the suffix under `datasets/` or `jobs/` onto the local
+    server-side shared root.
+    """
+    if not raw_path:
+        return None
+
+    p = Path(raw_path).expanduser()
+    if p.exists():
+        return str(p.resolve())
+
+    parts = list(p.parts)
+    for anchor in ("datasets", "jobs"):
+        if anchor in parts:
+            idx = parts.index(anchor)
+            remapped = shared / Path(*parts[idx:])
+            return str(remapped)
+
+    return str(p)
+
+
+def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets: bool) -> None:
     job = json.loads((job_dir / "job.json").read_text())
     job_type = job["type"]
     job_id = job["job_id"]
@@ -126,15 +180,45 @@ def run_job(job_dir: Path, local_datasets: Path | None) -> None:
     )
     write_progress(job_dir, status="running", message="Starting...")
 
-    # Resolve dataset path: use local copy if available
-    dataset_path = job["dataset_path"]
+    shared_root = job_dir.parent.parent
+
+    # Resolve dataset path from server-side shared root, not client absolute path.
+    dataset_path = str(shared_root / "datasets" / job["dataset_id"])
+
+    preferred_dataset_path = _resolve_shared_path_on_server(
+        job.get("preferred_dataset_path"),
+        shared_root,
+    )
+    if preferred_dataset_path and Path(preferred_dataset_path).exists():
+        dataset_path = preferred_dataset_path
+        log.info("Using preferred local dataset path: %s", dataset_path)
+
     if local_datasets is not None:
+        if auto_sync_local_datasets:
+            try:
+                synced = _sync_dataset_to_local_cache(shared_root, job["dataset_id"], local_datasets)
+                dataset_path = str(synced)
+                log.info("Synced dataset to local cache: %s", dataset_path)
+            except Exception as exc:
+                log.warning("Local dataset auto-sync failed, falling back: %s", exc)
+
         local_ds = local_datasets / job["dataset_id"]
         if local_ds.exists():
             dataset_path = str(local_ds)
             log.info("Using local dataset copy: %s", dataset_path)
         else:
             log.warning("Local dataset not found (%s), using shared path", local_ds)
+
+    if not Path(dataset_path).exists():
+        # Final fallback for old jobs that stored client-side absolute dataset_path.
+        remapped = _resolve_shared_path_on_server(job.get("dataset_path"), shared_root)
+        if remapped and Path(remapped).exists():
+            dataset_path = remapped
+            log.info("Remapped dataset path to server shared root: %s", dataset_path)
+        else:
+            raise FileNotFoundError(
+                f"Dataset path not found on server: {dataset_path}"
+            )
 
     scripts_dir = Path(__file__).parent
     log_file = job_dir / "worker.log"
@@ -151,11 +235,13 @@ def run_job(job_dir: Path, local_datasets: Path | None) -> None:
             "--lr", str(job["params"]["learning_rate"]),
         ]
         if job.get("resume_from"):
-            cmd += ["--resume-from", job["resume_from"]]
+            resume_from = _resolve_shared_path_on_server(job["resume_from"], shared_root)
+            cmd += ["--resume-from", resume_from]
     elif job_type == "eval":
         checkpoint = job.get("eval_checkpoint") or job.get("resume_from")
         if not checkpoint:
             raise ValueError("eval job requires eval_checkpoint in job.json")
+        checkpoint = _resolve_shared_path_on_server(checkpoint, shared_root)
         cmd = [
             sys.executable,
             str(scripts_dir / "eval_model.py"),
@@ -236,15 +322,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="GPU worker — polls for and runs training jobs")
     parser.add_argument("--shared", default=None, help="Shared folder path (overrides INKWELL_SHARED)")
     parser.add_argument("--local-datasets", default=None, help="Local copy of datasets dir for faster I/O")
+    parser.add_argument(
+        "--no-auto-sync-local-datasets",
+        action="store_true",
+        help="Disable automatic rsync of each dataset into --local-datasets before running a job",
+    )
     parser.add_argument("--once", action="store_true", help="Process one pending job then exit")
     args = parser.parse_args()
 
     shared = get_shared_path(args.shared)
     local_datasets = Path(args.local_datasets).resolve() if args.local_datasets else None
+    auto_sync_local_datasets = not args.no_auto_sync_local_datasets
 
     log.info("GPU worker started. Watching: %s", shared / "jobs")
     if local_datasets:
         log.info("Local dataset cache: %s", local_datasets)
+        log.info("Auto-sync local datasets: %s", auto_sync_local_datasets)
     write_worker_status(
         shared,
         status="idle",
@@ -264,7 +357,8 @@ def main() -> None:
         job_dir = find_pending_job(shared)
         if job_dir:
             try:
-                run_job(job_dir, local_datasets)
+                run_job(job_dir, local_datasets, auto_sync_local_datasets)
+                
             except Exception as exc:
                 log.exception("Unexpected error running job in %s: %s", job_dir, exc)
                 write_progress(job_dir, status="failed", message=str(exc))

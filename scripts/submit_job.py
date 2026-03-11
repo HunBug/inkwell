@@ -64,7 +64,7 @@ def main() -> None:
     parser.add_argument("--resume-from", default=None, help="Continue finetune from this checkpoint path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint path for eval jobs")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--label", default=None, help="Optional human label for this job")
     args = parser.parse_args()

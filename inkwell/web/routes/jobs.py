@@ -122,6 +122,10 @@ def _is_pid_running(pid: int | None) -> bool:
         return False
     try:
         os.kill(pid, 0)
+        proc_cmdline = Path(f"/proc/{pid}/cmdline")
+        if proc_cmdline.exists():
+            cmd = proc_cmdline.read_text(errors="ignore").replace("\x00", " ")
+            return "run_automation.py" in cmd
         return True
     except OSError:
         return False
