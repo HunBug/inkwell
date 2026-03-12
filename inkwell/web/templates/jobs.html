@@ -55,6 +55,16 @@
 .launcher-pill.completed { background: #d4edda; color: #155724; }
 .launcher-pill.failed { background: #f8d7da; color: #721c24; }
 .launcher-pill.idle, .launcher-pill.unknown { background: #eee; color: #555; }
+.sync-pill {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-weight: 600;
+}
+.sync-pill.running { background: #cce5ff; color: #004085; }
+.sync-pill.completed { background: #d4edda; color: #155724; }
+.sync-pill.failed { background: #f8d7da; color: #721c24; }
+.sync-pill.idle, .sync-pill.unknown { background: #eee; color: #555; }
 .control-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -77,6 +87,10 @@
     font-size: 0.8rem;
     color: #666;
 }
+.sync-btn {
+    background: #3498db;
+}
+.sync-btn:hover { background: #2980b9; }
 
 .job-card {
     background: white;
@@ -227,6 +241,24 @@
         </form>
         <span class="launch-note">Runs: prechecks → split freeze → dataset export/reuse → optional sync → submit job</span>
     </div>
+
+    <div style="margin-bottom: 0.75rem;">
+        <form action="/jobs/sync/run" method="post" style="display:inline;">
+            <button class="sync-btn" {% if sync.status == 'running' %}disabled{% endif %}>
+                Sync code + restart worker
+            </button>
+        </form>
+        <span class="sync-pill {{ sync.status }}">sync: {{ sync.status }}</span>
+        {% if sync.updated_at %}
+        <span class="launch-note">updated {{ age(sync.updated_at) }}</span>
+        {% endif %}
+    </div>
+
+    {% if sync.log_tail %}
+    {% set sync_open = sync.status in ['running', 'failed'] %}
+    <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide sync log' : 'Show sync log'">{{ 'Hide sync log' if sync_open else 'Show sync log' }}</button>
+    <div class="log-block{% if sync_open %} open{% endif %}">{{ sync.log_tail | join('\n') }}</div>
+    {% endif %}
 
     <div class="control-grid">
         <div class="control-item">

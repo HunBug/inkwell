@@ -23,6 +23,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -38,6 +39,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECS = 10
+WORKER_SHARED: Path | None = None
+WORKER_LOCAL_DATASETS: Path | None = None
+WORKER_CURRENT_JOB: str | None = None
+STOP_REQUESTED = False
 
 
 def _sync_dataset_to_local_cache(shared: Path, dataset_id: str, local_datasets: Path) -> Path:
@@ -82,6 +87,23 @@ def write_worker_status(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     status_file.write_text(json.dumps(payload, indent=2))
+
+
+def _handle_termination(signum, frame) -> None:
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
+    if WORKER_SHARED is not None:
+        try:
+            write_worker_status(
+                WORKER_SHARED,
+                status="stopped",
+                current_job=WORKER_CURRENT_JOB,
+                local_datasets=str(WORKER_LOCAL_DATASETS) if WORKER_LOCAL_DATASETS else None,
+                message=f"Worker stopping on signal {signum}",
+            )
+        except Exception:
+            pass
+    raise KeyboardInterrupt
 
 
 def get_shared_path(override: str | None) -> Path:
@@ -166,9 +188,11 @@ def _resolve_shared_path_on_server(raw_path: str | None, shared: Path) -> str | 
 
 
 def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets: bool) -> None:
+    global WORKER_CURRENT_JOB
     job = json.loads((job_dir / "job.json").read_text())
     job_type = job["type"]
     job_id = job["job_id"]
+    WORKER_CURRENT_JOB = job_id
 
     log.info("Starting job %s  type=%s", job_id, job_type)
     write_worker_status(
@@ -196,18 +220,46 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
     if local_datasets is not None:
         if auto_sync_local_datasets:
             try:
+                write_progress(
+                    job_dir,
+                    status="running",
+                    message=f"Syncing dataset to local cache: {local_datasets / job['dataset_id']}",
+                )
                 synced = _sync_dataset_to_local_cache(shared_root, job["dataset_id"], local_datasets)
                 dataset_path = str(synced)
                 log.info("Synced dataset to local cache: %s", dataset_path)
+                write_progress(
+                    job_dir,
+                    status="running",
+                    message=f"Dataset synced to local cache: {dataset_path}",
+                    dataset_path=dataset_path,
+                )
             except Exception as exc:
                 log.warning("Local dataset auto-sync failed, falling back: %s", exc)
+                write_progress(
+                    job_dir,
+                    status="running",
+                    message=f"Local dataset auto-sync failed, falling back to shared path: {exc}",
+                )
 
         local_ds = local_datasets / job["dataset_id"]
         if local_ds.exists():
             dataset_path = str(local_ds)
             log.info("Using local dataset copy: %s", dataset_path)
+            write_progress(
+                job_dir,
+                status="running",
+                message=f"Using local dataset copy: {dataset_path}",
+                dataset_path=dataset_path,
+            )
         else:
             log.warning("Local dataset not found (%s), using shared path", local_ds)
+            write_progress(
+                job_dir,
+                status="running",
+                message=f"Local dataset cache missing, using shared path: {dataset_path}",
+                dataset_path=dataset_path,
+            )
 
     if not Path(dataset_path).exists():
         # Final fallback for old jobs that stored client-side absolute dataset_path.
@@ -277,6 +329,7 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
                     local_datasets=str(local_datasets) if local_datasets else None,
                     message="Last job cancelled",
                 )
+                WORKER_CURRENT_JOB = None
                 return
             time.sleep(5)
             write_worker_status(
@@ -305,6 +358,7 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
             local_datasets=str(local_datasets) if local_datasets else None,
             message="Idle",
         )
+        WORKER_CURRENT_JOB = None
         log.info("Job %s completed successfully", job_id)
     else:
         write_progress(job_dir, status="failed", message=f"Process exited with code {rc}")
@@ -315,10 +369,12 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
             local_datasets=str(local_datasets) if local_datasets else None,
             message=f"Last job failed with exit code {rc}",
         )
+        WORKER_CURRENT_JOB = None
         log.error("Job %s failed (exit code %d) — see %s", job_id, rc, log_file)
 
 
 def main() -> None:
+    global WORKER_SHARED, WORKER_LOCAL_DATASETS
     parser = argparse.ArgumentParser(description="GPU worker — polls for and runs training jobs")
     parser.add_argument("--shared", default=None, help="Shared folder path (overrides INKWELL_SHARED)")
     parser.add_argument("--local-datasets", default=None, help="Local copy of datasets dir for faster I/O")
@@ -333,6 +389,11 @@ def main() -> None:
     shared = get_shared_path(args.shared)
     local_datasets = Path(args.local_datasets).resolve() if args.local_datasets else None
     auto_sync_local_datasets = not args.no_auto_sync_local_datasets
+    WORKER_SHARED = shared
+    WORKER_LOCAL_DATASETS = local_datasets
+
+    signal.signal(signal.SIGTERM, _handle_termination)
+    signal.signal(signal.SIGINT, _handle_termination)
 
     log.info("GPU worker started. Watching: %s", shared / "jobs")
     if local_datasets:
@@ -347,6 +408,8 @@ def main() -> None:
     )
 
     while True:
+        if STOP_REQUESTED:
+            break
         write_worker_status(
             shared,
             status="idle",
@@ -376,6 +439,14 @@ def main() -> None:
                 log.info("No pending jobs found.")
                 break
             time.sleep(POLL_INTERVAL_SECS)
+
+    write_worker_status(
+        shared,
+        status="stopped",
+        current_job=None,
+        local_datasets=str(local_datasets) if local_datasets else None,
+        message="Worker exited",
+    )
 
 
 if __name__ == "__main__":

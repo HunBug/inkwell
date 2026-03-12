@@ -14,8 +14,13 @@ user = "hunbug"
 port = 22
 # Destination folder on GPU machine for the synced code repository.
 code_destination = "~/work/inkwell"
+# Shared folder path as seen on the GPU server.
+shared_path_on_server = "/home/hunbug/mnt/lara-playground/playground/inkwell-automation"
 # Remote dataset cache root on the GPU machine. The launcher can rsync the selected dataset here.
 remote_dataset_cache_root = "~/work/inkwell-datasets"
+# Optional explicit local dataset cache path for the worker process.
+# If omitted, remote_dataset_cache_root is used.
+worker_local_datasets = "~/work/inkwell-datasets"
 
 [prechecks]
 require_ping = true

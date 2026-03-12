@@ -136,6 +136,11 @@ def _launcher_paths(shared: Path) -> tuple[Path, Path]:
     return control_dir / "automation_launcher_state.json", control_dir / "automation_launcher.log"
 
 
+def _sync_paths(shared: Path) -> tuple[Path, Path]:
+    control_dir = shared / "control"
+    return control_dir / "sync_launcher_state.json", control_dir / "sync_launcher.log"
+
+
 def _detect_launcher_status_from_log(log_path: Path) -> str:
     if not log_path.exists():
         return "unknown"
@@ -145,6 +150,21 @@ def _detect_launcher_status_from_log(log_path: Path) -> str:
         if any(line.startswith("ERROR:") for line in tail):
             return "failed"
         if any("Job submitted:" in line for line in tail):
+            return "completed"
+    except Exception:
+        return "unknown"
+    return "unknown"
+
+
+def _detect_sync_status_from_log(log_path: Path) -> str:
+    if not log_path.exists():
+        return "unknown"
+    try:
+        lines = log_path.read_text(errors="replace").splitlines()
+        tail = lines[-80:]
+        if any(line.startswith("ERROR:") for line in tail):
+            return "failed"
+        if any("Sync complete" in line for line in tail):
             return "completed"
     except Exception:
         return "unknown"
@@ -196,6 +216,48 @@ def _load_launcher_state(shared: Path) -> dict:
     if log_path.exists():
         try:
             log_tail = log_path.read_text(errors="replace").splitlines()[-30:]
+        except Exception:
+            pass
+
+    state["log_tail"] = log_tail
+    return state
+
+
+def _load_sync_state(shared: Path) -> dict:
+    state_path, log_path = _sync_paths(shared)
+    if not state_path.parent.exists() or not state_path.exists():
+        return {
+            "status": "idle",
+            "pid": None,
+            "started_at": None,
+            "updated_at": None,
+            "last_result": None,
+            "log_tail": [],
+        }
+
+    try:
+        state = json.loads(state_path.read_text())
+    except Exception:
+        state = {
+            "status": "idle",
+            "pid": None,
+            "started_at": None,
+            "updated_at": None,
+            "last_result": None,
+        }
+
+    if state.get("status") == "running" and not _is_pid_running(state.get("pid")):
+        final_status = _detect_sync_status_from_log(log_path)
+        state["status"] = final_status
+        state["pid"] = None
+        state["last_result"] = final_status
+        state["updated_at"] = datetime.utcnow().isoformat() + "+00:00"
+        state_path.write_text(json.dumps(state, indent=2))
+
+    log_tail: list[str] = []
+    if log_path.exists():
+        try:
+            log_tail = log_path.read_text(errors="replace").splitlines()[-60:]
         except Exception:
             pass
 
@@ -269,6 +331,45 @@ def _start_automation_launcher(shared: Path) -> bool:
     return True
 
 
+def _start_sync_launcher(shared: Path) -> bool:
+    from inkwell.db import PROJECT_ROOT
+
+    state_path, log_path = _sync_paths(shared)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    current = _load_sync_state(shared)
+    if current.get("status") == "running":
+        return False
+
+    with open(log_path, "a", encoding="utf-8") as log_fh:
+        log_fh.write("\n" + "=" * 80 + "\n")
+        log_fh.write(f"Start: {datetime.utcnow().isoformat()}+00:00\n")
+        log_fh.flush()
+
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "sync_code_to_gpu.py"),
+                "--force",
+                "--start-runner",
+            ],
+            cwd=str(PROJECT_ROOT),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            text=True,
+        )
+
+    state = {
+        "status": "running",
+        "pid": proc.pid,
+        "started_at": datetime.utcnow().isoformat() + "+00:00",
+        "updated_at": datetime.utcnow().isoformat() + "+00:00",
+        "last_result": None,
+    }
+    state_path.write_text(json.dumps(state, indent=2))
+    return True
+
+
 def _age(iso_str: str) -> str:
     """Human-readable age from an ISO timestamp."""
     if not iso_str:
@@ -296,7 +397,8 @@ def index():
     shared_path = str(shared)
     worker_status = _load_worker_status()
     launcher = _load_launcher_state(shared)
-    any_running = jobs_active or launcher.get("status") == "running"
+    sync = _load_sync_state(shared)
+    any_running = jobs_active or launcher.get("status") == "running" or sync.get("status") == "running"
     cfg_summary = _load_automation_config_summary()
     pending_count = sum(1 for j in jobs if j["status"] == "pending")
     running_count = sum(1 for j in jobs if j["status"] == "running")
@@ -307,6 +409,7 @@ def index():
         shared_path=shared_path,
         worker_status=worker_status,
         launcher=launcher,
+        sync=sync,
         cfg_summary=cfg_summary,
         pending_count=pending_count,
         running_count=running_count,
@@ -331,4 +434,13 @@ def run_automation():
 
     shared = _get_shared_path()
     _start_automation_launcher(shared)
+    return redirect(url_for("jobs.index"))
+
+
+@jobs_bp.route("/sync/run", methods=["POST"])
+def run_sync():
+    from flask import redirect, url_for
+
+    shared = _get_shared_path()
+    _start_sync_launcher(shared)
     return redirect(url_for("jobs.index"))

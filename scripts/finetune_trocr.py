@@ -323,10 +323,11 @@ def main() -> None:
     write_progress(status="running", message="Final evaluation...")
     val_predictions = []
     val_references = []
+    device = next(model.parameters()).device
     model.eval()
     with torch.no_grad():
         for item_dict in val_ds:
-            pixel_values = item_dict["pixel_values"].unsqueeze(0)
+            pixel_values = item_dict["pixel_values"].unsqueeze(0).to(device)
             generated_ids = model.generate(pixel_values)
             pred = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
             # Recover reference text from dataset
