@@ -300,6 +300,7 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
             "--dataset", dataset_path,
             "--checkpoint", checkpoint,
             "--job-dir", str(job_dir),
+            "--split", job.get("split", "val"),
         ]
     else:
         raise ValueError(f"Unknown job type: {job_type}")

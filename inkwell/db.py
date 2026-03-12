@@ -113,6 +113,20 @@ ON transcriptions(transcription_type, line_id);
 CREATE INDEX IF NOT EXISTS idx_transcriptions_line_type_conf_id
 ON transcriptions(line_id, transcription_type, confidence DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id                INTEGER PRIMARY KEY,
+    eval_id           TEXT NOT NULL UNIQUE,
+    model_name        TEXT NOT NULL,
+    model_path        TEXT,
+    dataset_id        TEXT NOT NULL,
+    split             TEXT NOT NULL DEFAULT 'val',
+    num_samples       INTEGER,
+    cer               REAL,
+    wer               REAL,
+    predictions_path  TEXT,
+    created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TRIGGER IF NOT EXISTS protect_immutable_transcriptions_update
 BEFORE UPDATE ON transcriptions
 WHEN OLD.immutable = 1

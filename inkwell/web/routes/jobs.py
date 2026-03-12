@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import tomllib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, render_template, current_app
@@ -101,6 +101,9 @@ def _load_jobs() -> list[dict]:
             "type": job.get("type", "?"),
             "dataset_id": job.get("dataset_id", "?"),
             "base_model": job.get("base_model", ""),
+            "eval_checkpoint": job.get("eval_checkpoint", ""),
+            "split": job.get("split", "val"),
+            "resume_from": job.get("resume_from", ""),
             "created_at": job.get("created_at", ""),
             "params": job.get("params", {}),
             "status": progress.get("status", "unknown"),
@@ -380,6 +383,118 @@ def _start_sync_launcher(shared: Path) -> bool:
     return True
 
 
+BASELINE_MODEL = "microsoft/trocr-base-handwritten"
+
+
+def _load_datasets_with_eval_status(shared: Path, jobs: list[dict]) -> list[dict]:
+    """Scan shared/datasets/ and annotate each with baseline + finetuned eval status."""
+    datasets_dir = shared / "datasets"
+    if not datasets_dir.exists():
+        return []
+
+    # Index eval jobs and completed finetune jobs by dataset_id
+    eval_by_dataset: dict[str, list[dict]] = {}
+    finetuned_by_dataset: dict[str, list[dict]] = {}
+    for job in jobs:
+        ds_id = job.get("dataset_id", "")
+        if job.get("type") == "eval":
+            eval_by_dataset.setdefault(ds_id, []).append(job)
+        elif job.get("type") == "finetune" and job.get("status") == "completed":
+            finetuned_by_dataset.setdefault(ds_id, []).append(job)
+
+    result = []
+    for d in sorted(datasets_dir.iterdir(), key=lambda p: p.name, reverse=True):
+        if not d.is_dir():
+            continue
+        manifest: dict = {}
+        manifest_file = d / "manifest.json"
+        if manifest_file.exists():
+            try:
+                manifest = json.loads(manifest_file.read_text())
+            except Exception:
+                pass
+
+        dataset_id = d.name
+        eval_jobs = eval_by_dataset.get(dataset_id, [])
+
+        # --- Baseline eval status ---
+        baseline_eval = None
+        baseline_eval_pending = False
+        for ej in eval_jobs:
+            cp = ej.get("eval_checkpoint", "") or ""
+            if BASELINE_MODEL in cp or cp == BASELINE_MODEL:
+                if ej.get("status") == "completed":
+                    baseline_eval = ej
+                    break
+                if ej.get("status") in ("pending", "running"):
+                    baseline_eval_pending = True
+
+        # --- Fine-tuned checkpoints with their eval status ---
+        finetuned_with_eval = []
+        for ft_job in finetuned_by_dataset.get(dataset_id, []):
+            ft_id = ft_job.get("job_id", "")
+            cp_suffix = f"{ft_id}/checkpoints/best"
+            ft_eval = None
+            ft_eval_pending = False
+            for ej in eval_jobs:
+                cp = ej.get("eval_checkpoint", "") or ""
+                if cp_suffix in cp:
+                    if ej.get("status") == "completed":
+                        ft_eval = ej
+                    elif ej.get("status") in ("pending", "running"):
+                        ft_eval_pending = True
+            finetuned_with_eval.append({
+                "job_id": ft_id,
+                "created_at": ft_job.get("created_at", ""),
+                "eval": ft_eval,
+                "eval_pending": ft_eval_pending,
+            })
+
+        counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+
+        result.append({
+            "dataset_id": dataset_id,
+            "manifest": manifest,
+            "train_count": counts.get("train", "?"),
+            "val_count": counts.get("val", "?"),
+            "test_count": counts.get("test", "?"),
+            "baseline_eval": baseline_eval,
+            "baseline_eval_pending": baseline_eval_pending,
+            "finetuned": finetuned_with_eval,
+        })
+
+    return result
+
+
+def _submit_eval_job(shared: Path, dataset_id: str, checkpoint: str, split: str = "val") -> str:
+    """Write an eval job into the shared jobs folder.  Returns the new job_id."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    job_id = f"eval_{ts}"
+    job_dir = shared / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    # Human-readable label: use last meaningful path component
+    cp_label = Path(checkpoint).parent.parent.name if "/checkpoints/" in checkpoint else checkpoint.split("/")[-1]
+    label = f"Eval {dataset_id} / {cp_label}"
+
+    job = {
+        "job_id": job_id,
+        "type": "eval",
+        "label": label,
+        "dataset_id": dataset_id,
+        "eval_checkpoint": checkpoint,
+        "split": split,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (job_dir / "job.json").write_text(json.dumps(job, indent=2))
+    (job_dir / "progress.json").write_text(json.dumps({
+        "status": "pending",
+        "message": "Waiting for GPU worker",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }, indent=2))
+    return job_id
+
+
 def _age(iso_str: str) -> str:
     """Human-readable age from an ISO timestamp."""
     if not iso_str:
@@ -412,9 +527,11 @@ def index():
     cfg_summary = _load_automation_config_summary()
     pending_count = sum(1 for j in jobs if j["status"] == "pending")
     running_count = sum(1 for j in jobs if j["status"] == "running")
+    datasets = _load_datasets_with_eval_status(shared, jobs)
     return render_template(
         "jobs.html",
         jobs=jobs,
+        datasets=datasets,
         any_running=any_running,
         shared_path=shared_path,
         worker_status=worker_status,
@@ -423,6 +540,7 @@ def index():
         cfg_summary=cfg_summary,
         pending_count=pending_count,
         running_count=running_count,
+        baseline_model=BASELINE_MODEL,
         age=_age,
     )
 
@@ -453,4 +571,21 @@ def run_sync():
 
     shared = _get_shared_path()
     _start_sync_launcher(shared)
+    return redirect(url_for("jobs.index"))
+
+
+@jobs_bp.route("/eval/submit", methods=["POST"])
+def submit_eval():
+    from flask import request, redirect, url_for
+
+    shared = _get_shared_path()
+    dataset_id = request.form["dataset_id"]
+    checkpoint = request.form["checkpoint"]
+    split = request.form.get("split", "val")
+
+    # If checkpoint looks like a bare job_id (no slashes), resolve to actual path
+    if "/" not in checkpoint and not checkpoint.startswith("microsoft"):
+        checkpoint = str(shared / "jobs" / checkpoint / "checkpoints" / "best")
+
+    _submit_eval_job(shared, dataset_id, checkpoint, split)
     return redirect(url_for("jobs.index"))

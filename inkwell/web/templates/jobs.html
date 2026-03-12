@@ -92,6 +92,85 @@
 }
 .sync-btn:hover { background: #2980b9; }
 
+/* Datasets panel */
+.datasets-panel {
+    margin-bottom: 1.5rem;
+}
+.datasets-panel h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.6rem;
+    color: #444;
+}
+.dataset-row {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.dataset-id {
+    font-family: monospace;
+    font-weight: 600;
+    font-size: 0.95rem;
+    flex: 0 0 auto;
+    min-width: 14rem;
+}
+.dataset-counts {
+    font-size: 0.8rem;
+    color: #666;
+    flex: 0 0 auto;
+}
+.eval-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 1;
+}
+.eval-label {
+    font-size: 0.75rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+}
+.cer-badge {
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 10px;
+    background: #f0e6ff;
+    color: #5b0eae;
+}
+.cer-badge.good { background: #d4edda; color: #155724; }
+.cer-badge.meh  { background: #fff3cd; color: #856404; }
+.eval-btn {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 4px;
+    background: #8e44ad;
+    color: white;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.eval-btn:hover { background: #7d3c98; }
+.eval-btn.baseline-btn { background: #636e72; }
+.eval-btn.baseline-btn:hover { background: #4d5760; }
+.eval-pending-pill {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    background: #cce5ff;
+    color: #004085;
+    font-weight: 600;
+}
+
 .job-card {
     background: white;
     border: 1px solid #ddd;
@@ -311,6 +390,69 @@
 
 {% if any_running %}
 <p class="autorefresh-note">⟳ Auto-refreshing every 8 seconds (active job detected)</p>
+{% endif %}
+
+{% if datasets %}
+<div class="datasets-panel">
+    <h3>Datasets &amp; Evaluations</h3>
+    {% for ds in datasets %}
+    <div class="dataset-row">
+        <span class="dataset-id">{{ ds.dataset_id }}</span>
+        <span class="dataset-counts">
+            train: {{ ds.train_count }} &nbsp; val: {{ ds.val_count }} &nbsp; test: {{ ds.test_count }}
+        </span>
+
+        <div class="eval-group">
+            {# --- Baseline eval --- #}
+            <span class="eval-label">baseline:</span>
+            {% if ds.baseline_eval %}
+                {% set cer = ds.baseline_eval.result.get('cer') if ds.baseline_eval.result else None %}
+                {% if cer is not none %}
+                    <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
+                        CER {{ "%.1f"|format(cer * 100) }}%
+                    </span>
+                {% else %}
+                    <span class="cer-badge">done</span>
+                {% endif %}
+            {% elif ds.baseline_eval_pending %}
+                <span class="eval-pending-pill">queued / running</span>
+            {% else %}
+                <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
+                    <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
+                    <input type="hidden" name="checkpoint" value="{{ baseline_model }}">
+                    <input type="hidden" name="split" value="val">
+                    <button type="submit" class="eval-btn baseline-btn">▶ Eval baseline</button>
+                </form>
+            {% endif %}
+
+            {# --- Fine-tuned evals --- #}
+            {% for ft in ds.finetuned %}
+            <span style="color:#ccc">|</span>
+            <span class="eval-label" title="{{ ft.job_id }}">{{ ft.job_id[:22] }}:</span>
+            {% if ft.eval %}
+                {% set cer = ft.eval.result.get('cer') if ft.eval.result else None %}
+                {% if cer is not none %}
+                    <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
+                        CER {{ "%.1f"|format(cer * 100) }}%
+                    </span>
+                {% else %}
+                    <span class="cer-badge">done</span>
+                {% endif %}
+            {% elif ft.eval_pending %}
+                <span class="eval-pending-pill">queued / running</span>
+            {% else %}
+                <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
+                    <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
+                    <input type="hidden" name="checkpoint" value="{{ ft.job_id }}">
+                    <input type="hidden" name="split" value="val">
+                    <button type="submit" class="eval-btn">▶ Eval fine-tuned</button>
+                </form>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
 {% endif %}
 
 {% if not jobs %}
