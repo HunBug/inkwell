@@ -83,6 +83,15 @@ def _load_jobs() -> list[dict]:
             except Exception:
                 pass
 
+        telemetry_tail: list[str] = []
+        telemetry_file = d / "telemetry.log"
+        if telemetry_file.exists():
+            try:
+                lines = telemetry_file.read_text(errors="replace").splitlines()
+                telemetry_tail = lines[-30:]
+            except Exception:
+                pass
+
         can_cancel = progress.get("status") in ("pending", "running")
         cancel_exists = (d / "CANCEL").exists()
 
@@ -98,6 +107,7 @@ def _load_jobs() -> list[dict]:
             "progress": progress,
             "result": result,
             "log_tail": log_tail,
+            "telemetry_tail": telemetry_tail,
             "can_cancel": can_cancel and not cancel_exists,
             "cancel_requested": cancel_exists,
             "job_dir": str(d),

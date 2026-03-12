@@ -30,7 +30,7 @@ require_no_active_jobs = true
 
 [dataset]
 # Reused by default. Change this when you want a new frozen export.
-dataset_id = "gt_20260311"
+dataset_id = "gt_20260312_round1"
 # If false and the dataset folder already exists, it is reused as-is.
 force_reexport = false
 # If true, the launcher will rsync the chosen dataset to gpu.remote_dataset_cache_root

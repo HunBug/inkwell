@@ -13,6 +13,21 @@ from inkwell.db import get_connection, DEFAULT_DB_PATH
 annotate_bp = Blueprint("annotate", __name__, url_prefix="/annotate")
 
 
+ACCENT_NORMALIZATION = str.maketrans({
+    "à": "á",
+    "À": "Á",
+    "è": "é",
+    "È": "É",
+    "ì": "í",
+    "Ì": "Í",
+})
+
+
+def _normalize_annotation_text(text: str) -> str:
+    """Fix common Estonian-keyboard grave/acute mixups before saving GT."""
+    return text.translate(ACCENT_NORMALIZATION)
+
+
 def get_db():
     """Get database connection for current request."""
     if "db" not in g:
@@ -193,7 +208,9 @@ def api_submit():
     data = request.get_json()
     
     line_id = data.get("line_id")
-    corrected_text = data.get("corrected_text", "").strip()
+    corrected_text = _normalize_annotation_text(
+        data.get("corrected_text", "").strip()
+    )
     flags = data.get("flags", [])  # Array of flag strings
     
     if not line_id:
@@ -326,7 +343,9 @@ def api_update():
     data = request.get_json()
     
     line_id = data.get("line_id")
-    corrected_text = data.get("corrected_text", "").strip()
+    corrected_text = _normalize_annotation_text(
+        data.get("corrected_text", "").strip()
+    )
     flags = data.get("flags", [])
     trans_id = data.get("trans_id")
     

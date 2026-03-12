@@ -20,8 +20,12 @@ Writes:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
-import sys
+import os
+import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -156,6 +160,113 @@ def compute_cer(predictions: list[str], references: list[str]) -> float:
     return total_dist / total_len if total_len > 0 else 0.0
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _read_net_totals_bytes() -> tuple[int, int] | None:
+    path = Path("/proc/net/dev")
+    if not path.exists():
+        return None
+    rx_total = 0
+    tx_total = 0
+    try:
+        lines = path.read_text().splitlines()[2:]
+        for line in lines:
+            name, data = line.split(":", 1)
+            iface = name.strip()
+            if iface == "lo":
+                continue
+            cols = data.split()
+            if len(cols) < 16:
+                continue
+            rx_total += int(cols[0])
+            tx_total += int(cols[8])
+    except Exception:
+        return None
+    return rx_total, tx_total
+
+
+def _query_gpu_metrics() -> dict:
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if not out:
+            return {}
+        first = out.splitlines()[0]
+        gpu_util, mem_used, mem_total, temp = [v.strip() for v in first.split(",")[:4]]
+        return {
+            "gpu_util_pct": int(gpu_util),
+            "gpu_mem_used_mb": int(mem_used),
+            "gpu_mem_total_mb": int(mem_total),
+            "gpu_temp_c": int(temp),
+        }
+    except Exception:
+        return {}
+
+
+class TelemetrySampler:
+    def __init__(self, job_dir: Path, interval_s: int = 10) -> None:
+        self.job_dir = job_dir
+        self.interval_s = max(5, interval_s)
+        self.telemetry_path = self.job_dir / "telemetry.log"
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _append(self, payload: dict) -> None:
+        payload["ts"] = _utc_now()
+        with open(self.telemetry_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+
+        def run() -> None:
+            prev_net = _read_net_totals_bytes()
+            prev_t = time.time()
+            while not self._stop_event.is_set():
+                now_t = time.time()
+                payload: dict = {
+                    "kind": "runtime",
+                    "loadavg_1m": os.getloadavg()[0],
+                }
+
+                payload.update(_query_gpu_metrics())
+
+                net = _read_net_totals_bytes()
+                if net and prev_net:
+                    dt = max(0.001, now_t - prev_t)
+                    rx_bps = int((net[0] - prev_net[0]) / dt)
+                    tx_bps = int((net[1] - prev_net[1]) / dt)
+                    payload["net_rx_bps"] = max(0, rx_bps)
+                    payload["net_tx_bps"] = max(0, tx_bps)
+                    payload["net_rx_mb_s"] = round(payload["net_rx_bps"] / (1024 * 1024), 3)
+                    payload["net_tx_mb_s"] = round(payload["net_tx_bps"] / (1024 * 1024), 3)
+
+                self._append(payload)
+                prev_net = net or prev_net
+                prev_t = now_t
+                self._stop_event.wait(self.interval_s)
+
+        self._append({"kind": "event", "message": "telemetry_start"})
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+        self._append({"kind": "event", "message": "telemetry_stop"})
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -176,6 +287,7 @@ def main() -> None:
     job_dir = Path(args.job_dir)
     checkpoints_dir = job_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    telemetry = TelemetrySampler(job_dir, interval_s=10)
 
     def write_progress(**kwargs):
         p = job_dir / "progress.json"
@@ -189,6 +301,8 @@ def main() -> None:
         existing["updated_at"] = datetime.now(timezone.utc).isoformat()
         p.write_text(json.dumps(existing, indent=2))
 
+    telemetry.start()
+    atexit.register(telemetry.stop)
     write_progress(status="running", message="Loading model...")
     print(f"Loading model: {args.base_model}", flush=True)
 
@@ -224,10 +338,8 @@ def main() -> None:
             learning_rate=args.lr,
             weight_decay=0.01,
             eval_strategy="epoch",
-            save_strategy="epoch",
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,
+            save_strategy="no",
+            load_best_model_at_end=False,
             predict_with_generate=False,
             logging_steps=10,
             fp16=torch.cuda.is_available(),
@@ -313,11 +425,11 @@ def main() -> None:
 
     assert train_result is not None
 
-    # Save best model to checkpoints/best
+    # Save final model to checkpoints/best (quick mode: no intermediate checkpoints)
     best_dir = checkpoints_dir / "best"
     trainer.save_model(str(best_dir))
     processor.save_pretrained(str(best_dir))
-    print(f"Best model saved to {best_dir}", flush=True)
+    print(f"Final model saved to {best_dir}", flush=True)
 
     # Final eval + CER on val set
     write_progress(status="running", message="Final evaluation...")
@@ -365,6 +477,7 @@ def main() -> None:
         batch_size=current_batch_size,
         message=f"Done. Val CER: {val_cer:.4f}",
     )
+    telemetry.stop()
 
 
 if __name__ == "__main__":

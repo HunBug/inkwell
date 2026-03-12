@@ -424,6 +424,11 @@
         <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide log' : 'Show log'">{{ 'Hide log' if job_open else 'Show log' }}</button>
         <div class="log-block{% if job_open %} open{% endif %}">{{ job.log_tail | join('\n') }}</div>
         {% endif %}
+
+        {% if job.telemetry_tail %}
+        <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide telemetry' : 'Show telemetry'">Show telemetry</button>
+        <div class="log-block">{{ job.telemetry_tail | join('\n') }}</div>
+        {% endif %}
     </div>
 </div>
 {% endfor %}

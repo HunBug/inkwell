@@ -52,7 +52,13 @@ def get_shared_path(override: str | None) -> Path:
 
 
 def get_gt_lines(conn) -> list[dict]:
-    """All HUMAN_CORRECTED lines that have a split assignment."""
+    """All HUMAN_CORRECTED lines that have a split assignment.
+
+    Filtering rules:
+    - [ur] (unreadable) and [nt] (not text) are excluded from all splits.
+    - [?] (uncertain) are kept in the train split only; excluded from val/test
+      where clean ground truth is required.
+    """
     rows = conn.execute("""
         SELECT
             t.line_id,
@@ -65,7 +71,8 @@ def get_gt_lines(conn) -> list[dict]:
         JOIN dataset_splits ds ON ds.page_id = l.page_id
         WHERE t.transcription_type = 'HUMAN_CORRECTED'
           AND t.immutable = 1
-          AND t.text NOT IN ('[ur]', '[nt]', '[?]')
+          AND t.text NOT IN ('[ur]', '[nt]')
+          AND NOT (t.text = '[?]' AND ds.split IN ('val', 'test'))
           AND (t.flag IS NULL OR t.flag NOT IN ('UNUSABLE_SEGMENTATION', 'NOT_TEXT'))
           AND l.skip = 0
           AND l.crop_image_path IS NOT NULL
