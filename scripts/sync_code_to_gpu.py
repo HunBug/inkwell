@@ -156,7 +156,7 @@ def check_remote_processes(ssh_target: str, port: str) -> list[str]:
     cmd = ssh_base_cmd(port) + [
         ssh_target,
         (
-            "pgrep -af \"(scripts/gpu_worker.py|scripts/finetune_trocr.py|scripts/eval_model.py|python.*finetune_trocr|python.*eval_model)\" "
+            "pgrep -af \"(scripts/gpu_worker.py|scripts/finetune_trocr.py|scripts/eval_model.py|scripts/infer_unlabeled_pool.py|python.*finetune_trocr|python.*eval_model|python.*infer_unlabeled_pool)\" "
             "| grep -v \"pgrep -af\" || true"
         ),
     ]

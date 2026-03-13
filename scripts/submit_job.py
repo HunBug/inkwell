@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Submit a finetune or eval job to the shared job queue.
+Submit a finetune, eval, or infer_pool job to the shared job queue.
 
 Creates:
   SHARED/jobs/{job_id}/
@@ -53,7 +53,7 @@ def get_shared_path(override: str | None) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit a GPU job")
-    parser.add_argument("type", choices=["finetune", "eval"], help="Job type")
+    parser.add_argument("type", choices=["finetune", "eval", "infer_pool"], help="Job type")
     parser.add_argument("--dataset-id", required=True, help="Dataset ID (from export_gt.py)")
     parser.add_argument("--shared", default=None, help="Shared folder path")
     parser.add_argument(
@@ -63,6 +63,7 @@ def main() -> None:
     )
     parser.add_argument("--resume-from", default=None, help="Continue finetune from this checkpoint path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint path for eval jobs")
+    parser.add_argument("--infer-batch-size", type=int, default=16, help="Batch size for infer_pool jobs")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=5e-5)
@@ -77,6 +78,10 @@ def main() -> None:
 
     dataset_path = str(shared / "datasets" / args.dataset_id)
 
+    checkpoint = args.checkpoint
+    if args.type in ("eval", "infer_pool") and not checkpoint:
+        parser.error("--checkpoint is required for eval and infer_pool jobs")
+
     job = {
         "job_id": job_id,
         "type": args.type,
@@ -86,11 +91,12 @@ def main() -> None:
         "dataset_path": dataset_path,
         "base_model": args.base_model,
         "resume_from": args.resume_from,
-        "eval_checkpoint": args.checkpoint,
+        "eval_checkpoint": checkpoint,
         "params": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "learning_rate": args.lr,
+            "infer_batch_size": args.infer_batch_size,
         },
     }
     with open(job_dir / "job.json", "w") as f:
@@ -112,8 +118,11 @@ def main() -> None:
         print(f"  Epochs:     {args.epochs}  Batch: {args.batch_size}  LR: {args.lr}")
         if args.resume_from:
             print(f"  Resume from: {args.resume_from}")
+    elif args.type == "eval":
+        print(f"  Checkpoint: {checkpoint}")
     else:
         print(f"  Checkpoint: {args.checkpoint}")
+        print(f"  Infer batch: {args.infer_batch_size}")
     print(f"\nJob directory: {job_dir}")
     print("To cancel:  touch " + str(job_dir / "CANCEL"))
 

@@ -65,6 +65,16 @@
 .sync-pill.completed { background: #d4edda; color: #155724; }
 .sync-pill.failed { background: #f8d7da; color: #721c24; }
 .sync-pill.idle, .sync-pill.unknown { background: #eee; color: #555; }
+.pool-pill {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-weight: 600;
+}
+.pool-pill.running { background: #cce5ff; color: #004085; }
+.pool-pill.completed { background: #d4edda; color: #155724; }
+.pool-pill.failed { background: #f8d7da; color: #721c24; }
+.pool-pill.idle, .pool-pill.unknown { background: #eee; color: #555; }
 .control-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -91,6 +101,10 @@
     background: #3498db;
 }
 .sync-btn:hover { background: #2980b9; }
+.pool-btn {
+    background: #8e44ad;
+}
+.pool-btn:hover { background: #7d3c98; }
 
 /* Datasets panel */
 .datasets-panel {
@@ -196,6 +210,7 @@
     color: white;
 }
 .job-type-badge.eval { background: #8e44ad; }
+.job-type-badge.infer_pool { background: #16a085; }
 .job-label { font-weight: 600; flex: 1; }
 .job-age  { font-size: 0.8rem; color: #888; }
 
@@ -333,10 +348,28 @@
         {% endif %}
     </div>
 
+    <div style="margin-bottom: 0.75rem;">
+        <form action="/jobs/pool/run" method="post" style="display:inline;">
+            <button class="pool-btn" {% if pool.status == 'running' %}disabled{% endif %}>
+                Export unlabeled + run full recognition
+            </button>
+        </form>
+        <span class="pool-pill {{ pool.status }}">pool: {{ pool.status }}</span>
+        {% if pool.updated_at %}
+        <span class="launch-note">updated {{ age(pool.updated_at) }}</span>
+        {% endif %}
+    </div>
+
     {% if sync.log_tail %}
     {% set sync_open = sync.status in ['running', 'failed'] %}
     <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide sync log' : 'Show sync log'">{{ 'Hide sync log' if sync_open else 'Show sync log' }}</button>
     <div class="log-block{% if sync_open %} open{% endif %}">{{ sync.log_tail | join('\n') }}</div>
+    {% endif %}
+
+    {% if pool.log_tail %}
+    {% set pool_open = pool.status in ['running', 'failed'] %}
+    <button class="log-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? 'Hide pool log' : 'Show pool log'">{{ 'Hide pool log' if pool_open else 'Show pool log' }}</button>
+    <div class="log-block{% if pool_open %} open{% endif %}">{{ pool.log_tail | join('\n') }}</div>
     {% endif %}
 
     <div class="control-grid">
@@ -464,7 +497,7 @@
 {% for job in jobs %}
 <div class="job-card">
     <div class="job-card-header">
-        <span class="job-type-badge {% if job.type == 'eval' %}eval{% endif %}">{{ job.type }}</span>
+        <span class="job-type-badge {% if job.type == 'eval' %}eval{% elif job.type == 'infer_pool' %}infer_pool{% endif %}">{{ job.type }}</span>
         <span class="job-label">{{ job.label }}</span>
         <span class="status-pill {{ job.status }}">{{ job.status }}</span>
         <span class="job-age">{{ age(job.created_at) }}</span>

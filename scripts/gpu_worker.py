@@ -302,6 +302,20 @@ def run_job(job_dir: Path, local_datasets: Path | None, auto_sync_local_datasets
             "--job-dir", str(job_dir),
             "--split", job.get("split", "val"),
         ]
+    elif job_type == "infer_pool":
+        checkpoint = job.get("eval_checkpoint") or job.get("resume_from")
+        if not checkpoint:
+            raise ValueError("infer_pool job requires eval_checkpoint in job.json")
+        checkpoint = _resolve_shared_path_on_server(checkpoint, shared_root)
+        infer_batch_size = str(job.get("params", {}).get("infer_batch_size", 16))
+        cmd = [
+            sys.executable,
+            str(scripts_dir / "infer_unlabeled_pool.py"),
+            "--dataset", dataset_path,
+            "--checkpoint", checkpoint,
+            "--job-dir", str(job_dir),
+            "--batch-size", infer_batch_size,
+        ]
     else:
         raise ValueError(f"Unknown job type: {job_type}")
 

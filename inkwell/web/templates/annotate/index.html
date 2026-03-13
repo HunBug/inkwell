@@ -379,6 +379,34 @@
                     <div class="progress-fill" id="progressBar" style="width: {{ stats.percent if stats.total > 0 else 0 }}%"></div>
                 </div>
             </div>
+
+            <div style="background: #fff; border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px; margin-bottom: 14px;">
+                <div style="font-size: 12px; color: #666; margin-bottom: 8px; font-weight: 600;">Queue Mode</div>
+                {% if suggestion_mode %}
+                    <div style="font-size: 12px; color: #2e7d32; margin-bottom: 8px;">
+                        Using suggestions: <strong>{{ suggestion_file }}</strong>
+                    </div>
+                    <a href="/annotate" style="display: inline-block; font-size: 12px; color: #007bff; text-decoration: none; margin-bottom: 8px;">
+                        ↺ Switch to random mode
+                    </a>
+                {% else %}
+                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">Random unannotated lines</div>
+                {% endif %}
+
+                <form method="get" action="/annotate" style="display: flex; gap: 6px; align-items: center;">
+                    <select name="suggestions" style="flex: 1; min-width: 0; font-size: 12px; padding: 6px; border: 1px solid #ddd; border-radius: 3px;">
+                        {% for f in suggestion_files %}
+                            <option value="{{ f }}" {% if suggestion_file == f %}selected{% endif %}>{{ f }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" style="font-size: 12px; padding: 6px 8px; border: 1px solid #007bff; background: #007bff; color: white; border-radius: 3px; cursor: pointer;">
+                        Load
+                    </button>
+                </form>
+                {% if not suggestion_files %}
+                    <div style="font-size: 11px; color: #999; margin-top: 6px;">No suggestion file found in working/suggestions/</div>
+                {% endif %}
+            </div>
             
             <div style="flex: 1;"></div>
             
@@ -501,8 +529,14 @@
                     </form>
                 {% else %}
                     <div style="text-align: center;">
-                        <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
-                        <p style="color: #666;">All {{ stats.total }} lines have been annotated.</p>
+                        {% if suggestion_mode %}
+                            <h2 style="margin-bottom: 10px;">✅ Suggestion queue complete</h2>
+                            <p style="color: #666; margin-bottom: 10px;">You've finished this suggestion file.</p>
+                            <a href="/annotate" style="color:#007bff; text-decoration:none;">Continue in random mode</a>
+                        {% else %}
+                            <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
+                            <p style="color: #666;">All {{ stats.total }} lines have been annotated.</p>
+                        {% endif %}
                     </div>
                 {% endif %}
             </div>
@@ -511,6 +545,10 @@
     
     <script>
         const lineContainer = document.getElementById('line-container');
+        const suggestionFile = {{ suggestion_file|tojson }};
+        const nextApiUrl = suggestionFile
+            ? `/annotate/api/next?suggestions=${encodeURIComponent(suggestionFile)}`
+            : '/annotate/api/next';
         
         let currentLineId = {{ line.id if line else 'null' }};
         let lastSavedLineId = null;
@@ -649,16 +687,26 @@
         
         async function loadNext() {
             try {
-                const response = await fetch('/annotate/api/next');
+                const response = await fetch(nextApiUrl);
                 const data = await response.json();
                 
                 if (data.done) {
-                    lineContainer.innerHTML = `
-                        <div style="text-align: center;">
-                            <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
-                            <p style="color: #666;">All ${data.stats.total} lines have been annotated.</p>
-                        </div>
-                    `;
+                    if (data.suggestion_mode) {
+                        lineContainer.innerHTML = `
+                            <div style="text-align: center;">
+                                <h2 style="margin-bottom: 10px;">✅ Suggestion queue complete</h2>
+                                <p style="color: #666; margin-bottom: 10px;">You've finished this suggestion file.</p>
+                                <a href="/annotate" style="color:#007bff; text-decoration:none;">Continue in random mode</a>
+                            </div>
+                        `;
+                    } else {
+                        lineContainer.innerHTML = `
+                            <div style="text-align: center;">
+                                <h2 style="margin-bottom: 10px;">🎉 All Done!</h2>
+                                <p style="color: #666;">All ${data.stats.total} lines have been annotated.</p>
+                            </div>
+                        `;
+                    }
                 } else {
                     currentLineId = data.line.id;
                     lineContainer.innerHTML = `

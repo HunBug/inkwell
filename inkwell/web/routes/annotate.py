@@ -107,6 +107,105 @@ def _get_random_unannotated_line(db):
     ).fetchone()
 
 
+def _working_root() -> Path:
+    return DEFAULT_DB_PATH.parent
+
+
+def _suggestions_dir() -> Path:
+    return _working_root() / "suggestions"
+
+
+def _list_suggestion_files() -> list[str]:
+    d = _suggestions_dir()
+    if not d.exists():
+        return []
+    files = [p.name for p in d.glob("next_samples_*.jsonl") if p.is_file()]
+    return sorted(files, reverse=True)
+
+
+def _resolve_suggestion_file(filename: str | None) -> Path | None:
+    if not filename:
+        return None
+    # only allow a plain filename under working/suggestions (no path traversal)
+    safe_name = Path(filename).name
+    if safe_name != filename:
+        return None
+    p = _suggestions_dir() / safe_name
+    return p if p.exists() and p.is_file() else None
+
+
+def _load_suggested_line_ids(file_path: Path) -> list[int]:
+    ids: list[int] = []
+    with open(file_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                line_id = obj.get("line_id")
+                if isinstance(line_id, int):
+                    ids.append(line_id)
+            except Exception:
+                continue
+    return ids
+
+
+def _get_line_payload_by_id(db, line_id: int):
+    return db.execute(
+        """
+        SELECT
+            l.id AS line_id,
+            l.crop_image_path,
+            best.text AS ocr_text,
+            best.confidence AS confidence,
+            best.model_version AS model_version
+        FROM lines l
+        JOIN transcriptions best
+          ON best.id = (
+              SELECT t.id
+              FROM transcriptions t
+              WHERE t.line_id = l.id
+                AND t.transcription_type = 'OCR_AUTO'
+              ORDER BY t.confidence DESC, t.id DESC
+              LIMIT 1
+          )
+        WHERE l.id = ?
+          AND l.skip = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM transcriptions t2
+              WHERE t2.line_id = l.id
+                AND t2.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+          )
+        LIMIT 1
+        """,
+        (line_id,),
+    ).fetchone()
+
+
+def _get_next_suggested_unannotated_line(db, suggestion_filename: str | None):
+    suggestion_path = _resolve_suggestion_file(suggestion_filename)
+    if not suggestion_path:
+        return None
+
+    line_ids = _load_suggested_line_ids(suggestion_path)
+    if not line_ids:
+        return None
+
+    for line_id in line_ids:
+        row = _get_line_payload_by_id(db, line_id)
+        if row:
+            return row
+    return None
+
+
+def _pick_line(db, suggestion_filename: str | None = None):
+    if suggestion_filename:
+        return _get_next_suggested_unannotated_line(db, suggestion_filename)
+    return _get_random_unannotated_line(db)
+
+
 @annotate_bp.route("/api/context/<int:line_id>")
 def api_context(line_id: int):
     """Return a wider crop of the page image showing context above/below the line."""
@@ -157,12 +256,23 @@ def api_context(line_id: int):
 def index():
     """Main annotation interface - shows one line at a time."""
     db = get_db()
-    row = _get_random_unannotated_line(db)
-    
-    if not row:
-        return render_template("annotate/done.html")
-    
+    suggestion_file = request.args.get("suggestions")
+    suggestion_files = _list_suggestion_files()
+    if suggestion_file and suggestion_file not in suggestion_files:
+        suggestion_file = None
+
+    row = _pick_line(db, suggestion_file)
     stats = get_stats(db)
+
+    if not row:
+        return render_template(
+            "annotate/index.html",
+            line=None,
+            stats=stats,
+            suggestion_mode=bool(suggestion_file),
+            suggestion_file=suggestion_file,
+            suggestion_files=suggestion_files,
+        )
     
     conf = row["confidence"]
     return render_template(
@@ -175,6 +285,9 @@ def index():
             "model": row["model_version"],
         },
         stats=stats,
+        suggestion_mode=bool(suggestion_file),
+        suggestion_file=suggestion_file,
+        suggestion_files=suggestion_files,
     )
 
 
@@ -182,14 +295,26 @@ def index():
 def api_next():
     """Get next line to annotate (AJAX)."""
     db = get_db()
-    row = _get_random_unannotated_line(db)
+    suggestion_file = request.args.get("suggestions")
+    suggestion_files = _list_suggestion_files()
+    if suggestion_file and suggestion_file not in suggestion_files:
+        suggestion_file = None
+
+    row = _pick_line(db, suggestion_file)
     
     if not row:
-        return jsonify({"done": True, "stats": get_stats(db)})
+        return jsonify({
+            "done": True,
+            "stats": get_stats(db),
+            "suggestion_mode": bool(suggestion_file),
+            "suggestion_file": suggestion_file,
+        })
     
     conf = row["confidence"]
     return jsonify({
         "done": False,
+        "suggestion_mode": bool(suggestion_file),
+        "suggestion_file": suggestion_file,
         "line": {
             "id": row["line_id"],
             "crop_path": row["crop_image_path"],
