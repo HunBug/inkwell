@@ -111,12 +111,13 @@ def segment_lines_cv_projection(
         if width < min_width:
             continue
         
-        # Add generous vertical margins to capture ascenders/descenders
-        # Allow overlap between lines for better OCR results
-        margin_y = 19
+        # Add generous vertical margins to capture ascenders/descenders.
+        # Top margin is slightly larger than bottom to reduce accent clipping.
+        margin_top = 24
+        margin_bottom = 19
         margin_x = 5
-        y_start = max(0, line_start - margin_y)
-        y_end = min(image.shape[0] - 1, line_end + margin_y)
+        y_start = max(0, line_start - margin_top)
+        y_end = min(image.shape[0] - 1, line_end + margin_bottom)
         x_start = max(0, x1 - margin_x)
         x_end = min(image.shape[1] - 1, x2 + margin_x)
         
