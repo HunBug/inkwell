@@ -137,9 +137,13 @@ python scripts/run_pipeline.py ocr --model easyocr --langs hu,en
 
 ## Live Docs To Read First
 
-For a new session, these are the important current docs:
+For a new session, start with these compact active docs:
 
-- `docs/inkwell_plan_final.md` — canonical architecture and project rules
-- `docs/execution_plan_v1_updated.md` — current implementation snapshot + next roadmap
-- `docs/gt_storage_design.md` — selected ground-truth storage approach
+- `docs/inkwell_plan_final.md` — canonical current plan and roadmap
+- `docs/runbook.md` — exact operational commands and loops
+- `docs/session_handoff.md` — concise current state + next priorities
+
+Historical / superseded material is kept under:
+
+- `docs/archive/`
 

@@ -41,7 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from inkwell.db import get_connection, DEFAULT_DB_PATH
+from inkwell.db import get_connection
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +162,44 @@ def _letter_ratio(s: str | None) -> float:
     return letters / max(len(t), 1)
 
 
+def _noise_metrics(s: str | None) -> tuple[float, float, int, int, int]:
+    t = _norm_text(s)
+    if not t:
+        return (0.0, 0.0, 0, 0, 0)
+    letters = sum(1 for ch in t if ch.isalpha())
+    digits = sum(1 for ch in t if ch.isdigit())
+    spaces = sum(1 for ch in t if ch.isspace())
+    symbols = len(t) - letters - digits - spaces
+    symbol_ratio = symbols / max(len(t), 1)
+    digit_ratio = digits / max(len(t), 1)
+    return (symbol_ratio, digit_ratio, letters, digits, len(t))
+
+
+def _looks_like_noise(s: str | None) -> bool:
+    symbol_ratio, digit_ratio, letters, _, tlen = _noise_metrics(s)
+    text = _norm_text(s)
+    if tlen < 4:
+        return True
+    if letters < 3:
+        return True
+    if symbol_ratio > 0.35:
+        return True
+    if digit_ratio > 0.45:
+        return True
+    if _letter_ratio(s) < 0.55:
+        return True
+    tokens = [tok for tok in text.split() if any(ch.isalpha() for ch in tok)]
+    if not tokens:
+        return True
+    if max(sum(1 for ch in tok if ch.isalpha()) for tok in tokens) < 3:
+        return True
+    vowels = set("aáeéiíoóöőuúüű")
+    vowel_count = sum(1 for ch in text if ch in vowels)
+    if letters >= 5 and vowel_count == 0:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # DB queries
 # ---------------------------------------------------------------------------
@@ -226,6 +264,7 @@ def _score_lines(
     n: int,
     max_per_page: int,
     max_per_notebook: int,
+    use_buckets: bool,
 ) -> list[dict]:
     """
     Score and rank candidates, then apply diversity cap.
@@ -234,8 +273,8 @@ def _score_lines(
     scored = []
     for c in candidates:
         text = (c["ocr_text"] or "").strip()
-        if len(text) < 4:
-            continue  # skip near-empty
+        if _looks_like_noise(text):
+            continue
 
         # Skip lines that look like pure noise / figure labels:
         #   - all caps with no spaces and < 8 chars (e.g. "ANOS", "PLAIN")
@@ -283,7 +322,7 @@ def _score_lines(
             if pred is not None:
                 # Skip likely garbage lines where both OCR and model output are
                 # mostly symbols/digits/punctuation.
-                if max(_letter_ratio(c.get("ocr_text", "")), _letter_ratio(pred)) < 0.45:
+                if _looks_like_noise(pred) and _looks_like_noise(c.get("ocr_text", "")):
                     continue
                 pool_disagree = _char_distance_ratio(c.get("ocr_text", ""), pred)
                 pool_pred_text = pred
@@ -309,6 +348,14 @@ def _score_lines(
         elif tlen > 80:
             reasons.append("long_line")
 
+        if conf < 0.25:
+            bucket = "hard"
+        elif conf < 0.55:
+            bucket = "medium"
+        else:
+            bucket = "clean"
+        reasons.append(f"bucket:{bucket}")
+
         scored.append({
             **c,
             "score": round(combined, 4),
@@ -317,27 +364,65 @@ def _score_lines(
             "diff_score": diff_score,
             "pool_disagree": round(pool_disagree, 4),
             "pool_pred_text": pool_pred_text,
+            "bucket": bucket,
         })
 
     # Sort by combined score descending
     scored.sort(key=lambda x: -x["score"])
 
-    # --- Diversity cap: max N lines per page, M per notebook ---
+    def _append_with_caps(
+        source: list[dict],
+        out: list[dict],
+        page_counts: Counter,
+        nb_counts: Counter,
+        target: int,
+    ) -> None:
+        for item in source:
+            if len(out) >= target:
+                return
+            pid = item["page_id"]
+            nid = item["notebook_id"]
+            if page_counts[pid] >= max_per_page:
+                continue
+            if nb_counts[nid] >= max_per_notebook:
+                continue
+            out.append(item)
+            page_counts[pid] += 1
+            nb_counts[nid] += 1
+
     page_counts: Counter = Counter()
     nb_counts: Counter = Counter()
-    selected = []
-    for item in scored:
-        pid = item["page_id"]
-        nid = item["notebook_id"]
-        if page_counts[pid] >= max_per_page:
-            continue
-        if nb_counts[nid] >= max_per_notebook:
-            continue
-        selected.append(item)
-        page_counts[pid] += 1
-        nb_counts[nid] += 1
-        if len(selected) >= n:
-            break
+    selected: list[dict] = []
+
+    if use_buckets:
+        hard = [s for s in scored if s["bucket"] == "hard"]
+        medium = [s for s in scored if s["bucket"] == "medium"]
+        clean = [s for s in scored if s["bucket"] == "clean"]
+
+        n_hard = int(round(n * 0.50))
+        n_medium = int(round(n * 0.35))
+        n_clean = max(0, n - n_hard - n_medium)
+
+        _append_with_caps(hard, selected, page_counts, nb_counts, n_hard)
+        _append_with_caps(medium, selected, page_counts, nb_counts, n_hard + n_medium)
+        _append_with_caps(clean, selected, page_counts, nb_counts, n_hard + n_medium + n_clean)
+
+    if len(selected) < n:
+        already = {item["line_id"] for item in selected}
+        if use_buckets:
+            fallback = [
+                s
+                for s in scored
+                if s["line_id"] not in already and s["bucket"] != "hard"
+            ]
+            fallback += [
+                s
+                for s in scored
+                if s["line_id"] not in already and s["bucket"] == "hard"
+            ]
+        else:
+            fallback = [s for s in scored if s["line_id"] not in already]
+        _append_with_caps(fallback, selected, page_counts, nb_counts, n)
 
     return selected
 
@@ -482,6 +567,11 @@ def main() -> None:
     )
     parser.add_argument("--max-per-page", type=int, default=2, help="Max lines picked per page (default: 2)")
     parser.add_argument("--max-per-notebook", type=int, default=40, help="Max lines picked per notebook (default: 40)")
+    parser.add_argument(
+        "--no-buckets",
+        action="store_true",
+        help="Disable mixed hard/medium/clean bucket sampling (default: enabled)",
+    )
     parser.add_argument("--shared", default=None, help="Shared folder path (overrides INKWELL_SHARED)")
     parser.add_argument("--db", default=None, help="Override DB path")
     parser.add_argument("--dry-run", action="store_true", help="Print summary only, don't write output file")
@@ -532,6 +622,7 @@ def main() -> None:
         n=args.n,
         max_per_page=args.max_per_page,
         max_per_notebook=args.max_per_notebook,
+        use_buckets=not args.no_buckets,
     )
     print(f"\n[pick] Selected {len(selected)} lines")
 

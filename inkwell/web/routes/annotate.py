@@ -340,6 +340,9 @@ def api_submit():
     
     if not line_id:
         return jsonify({"error": "Missing line_id"}), 400
+
+    if not corrected_text and not flags:
+        return jsonify({"error": "Must provide corrected text or select a flag"}), 400
     
     # Must have either text or flags
     if not corrected_text and not flags:
@@ -384,17 +387,28 @@ def review():
     per_page = 20
     offset = (page - 1) * per_page
     
-    # Get total count
+    # Get total count (latest human annotation per line)
     count_cursor = db.execute("""
-        SELECT COUNT(*) as total FROM transcriptions 
-        WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+        SELECT COUNT(*) as total
+        FROM (
+            SELECT line_id, MAX(id) AS latest_id
+            FROM transcriptions
+            WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+            GROUP BY line_id
+        ) latest
     """)
     total = count_cursor.fetchone()["total"]
     total_pages = (total + per_page - 1) // per_page
     
-    # Get paginated results
+    # Get paginated results (latest human annotation per line)
     cursor = db.execute("""
-        SELECT 
+        WITH latest AS (
+            SELECT line_id, MAX(id) AS latest_id
+            FROM transcriptions
+            WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+            GROUP BY line_id
+        )
+        SELECT
             t.id as trans_id,
             l.id as line_id,
             l.crop_image_path,
@@ -402,11 +416,18 @@ def review():
             t.flag,
             t.transcription_type,
             t.created_at,
-            (SELECT text FROM transcriptions WHERE line_id = l.id AND transcription_type = 'OCR_AUTO' LIMIT 1) as ocr_text
-        FROM transcriptions t
-        JOIN lines l ON t.line_id = l.id
-        WHERE t.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
-        ORDER BY t.created_at DESC
+            (
+                SELECT text
+                FROM transcriptions
+                WHERE line_id = l.id
+                  AND transcription_type = 'OCR_AUTO'
+                ORDER BY confidence DESC, id DESC
+                LIMIT 1
+            ) as ocr_text
+        FROM latest
+        JOIN transcriptions t ON t.id = latest.latest_id
+        JOIN lines l ON l.id = t.line_id
+        ORDER BY t.created_at DESC, t.id DESC
         LIMIT ? OFFSET ?
     """, (per_page, offset))
     
@@ -435,9 +456,23 @@ def edit(line_id):
             t.text as corrected_text,
             t.flag,
             t.transcription_type,
-            (SELECT text FROM transcriptions WHERE line_id = l.id AND transcription_type = 'OCR_AUTO' LIMIT 1) as ocr_text
+            (
+                SELECT text
+                FROM transcriptions
+                WHERE line_id = l.id
+                  AND transcription_type = 'OCR_AUTO'
+                ORDER BY confidence DESC, id DESC
+                LIMIT 1
+            ) as ocr_text
         FROM lines l
-        LEFT JOIN transcriptions t ON l.id = t.line_id AND t.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+        LEFT JOIN transcriptions t ON t.id = (
+            SELECT t2.id
+            FROM transcriptions t2
+            WHERE t2.line_id = l.id
+              AND t2.transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+            ORDER BY t2.created_at DESC, t2.id DESC
+            LIMIT 1
+        )
         WHERE l.id = ?
         LIMIT 1
     """, (line_id,))
@@ -472,17 +507,15 @@ def api_update():
         data.get("corrected_text", "").strip()
     )
     flags = data.get("flags", [])
-    trans_id = data.get("trans_id")
+    # trans_id is intentionally ignored: GT edits are append-only revisions
+    # so immutable history remains intact.
+    _ = data.get("trans_id")
     
     if not line_id:
         return jsonify({"error": "Missing line_id"}), 400
     
     try:
-        # Delete old transcription if it exists
-        if trans_id:
-            db.execute("DELETE FROM transcriptions WHERE id = ?", (trans_id,))
-        
-        # Insert new one
+        # Insert a new revision (append-only)
         if corrected_text:
             db.execute(
                 """
@@ -499,9 +532,9 @@ def api_update():
                 """,
                 (line_id, ";".join(flags)),
             )
-        
+
         db.commit()
-        
+
         return jsonify({"success": True})
     except Exception as e:
         db.rollback()
