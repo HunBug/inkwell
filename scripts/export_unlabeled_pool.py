@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from inkwell.db import get_connection, DEFAULT_DB_PATH
+from inkwell.cropping import load_segmentation_tuning_config, resolve_line_crop_path
 
 
 def get_shared_path(override: str | None) -> Path:
@@ -92,36 +93,18 @@ def get_unlabeled_rows(conn) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def resolve_crop_path(raw_path: str, working_dir: Path) -> Path:
-    """Resolve crop_image_path from DB to a local file path.
-
-    Supported formats seen in DB:
-    - absolute: /home/.../working/line_crops/123.png
-    - relative to project root: working/line_crops/123.png
-    - relative to working dir: line_crops/123.png
-    - bare filename: 123.png
-    """
-    p = Path(raw_path)
-    if p.is_absolute() and p.exists():
-        return p
-
-    candidates = [
-        working_dir / p,
-        PROJECT_ROOT / p,
-        working_dir / "line_crops" / p.name,
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    return candidates[0]
-
-
 def main() -> None:
     p = argparse.ArgumentParser(description="Export full unlabeled pool for GPU inference")
     p.add_argument("--dataset-id", required=True, help="Dataset ID under shared/datasets/")
     p.add_argument("--shared", default=None, help="Shared folder path")
     p.add_argument("--db", default=None, help="Override DB path")
     p.add_argument("--force", action="store_true", help="Overwrite existing unlabeled_pool export")
+    p.add_argument(
+        "--tuning-config-id",
+        type=int,
+        default=None,
+        help="Pin crop profile metadata to this segmentation_tuning_configs.id",
+    )
     args = p.parse_args()
 
     shared = get_shared_path(args.shared)
@@ -132,10 +115,24 @@ def main() -> None:
     out_dir = dataset_dir / "unlabeled_pool"
     crops_out = out_dir / "crops"
     if out_dir.exists() and args.force:
-        shutil.rmtree(out_dir)
+            print(f"[info] --force: clearing existing export at {out_dir}", flush=True)
+            # shutil.rmtree fails on network mounts with ENOTEMPTY; delete file-by-file instead
+            if crops_out.exists():
+                removed = 0
+                for f in crops_out.iterdir():
+                    if f.is_file():
+                        f.unlink()
+                        removed += 1
+                crops_out.rmdir()
+                print(f"[info] Removed {removed} existing crops", flush=True)
+            for leftover in out_dir.iterdir():
+                if leftover.is_file():
+                    leftover.unlink()
+            out_dir.rmdir()
     crops_out.mkdir(parents=True, exist_ok=True)
 
     conn = get_connection(args.db)
+    tuning_config = load_segmentation_tuning_config(conn, args.tuning_config_id)
     rows = get_unlabeled_rows(conn)
     conn.close()
 
@@ -147,7 +144,11 @@ def main() -> None:
 
     with open(out_dir / "pool.jsonl", "w", encoding="utf-8") as f:
         for idx, row in enumerate(rows, 1):
-            src = resolve_crop_path(row["crop_image_path"], working_dir)
+            src = resolve_line_crop_path(
+                row["crop_image_path"],
+                working_dir=working_dir,
+                project_root=PROJECT_ROOT,
+            )
             if not src.exists():
                 missing += 1
                 continue
@@ -186,6 +187,7 @@ def main() -> None:
         "missing_crops": missing,
         "source_db": str(Path(args.db).expanduser().resolve()) if args.db else str(DEFAULT_DB_PATH),
         "pool_jsonl": str(out_dir / "pool.jsonl"),
+        "crop_profile": tuning_config,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
 

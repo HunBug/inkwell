@@ -63,6 +63,7 @@ def main() -> None:
     )
     parser.add_argument("--resume-from", default=None, help="Continue finetune from this checkpoint path")
     parser.add_argument("--checkpoint", default=None, help="Checkpoint path for eval jobs")
+    parser.add_argument("--split", choices=["val", "test"], default="val", help="Eval split (eval jobs)")
     parser.add_argument("--infer-batch-size", type=int, default=16, help="Batch size for infer_pool jobs")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=2)
@@ -72,7 +73,7 @@ def main() -> None:
 
     shared = get_shared_path(args.shared)
     now = datetime.now(timezone.utc)
-    job_id = f"{args.type}_{now.strftime('%Y%m%d_%H%M%S')}"
+    job_id = f"{args.type}_{now.strftime('%Y%m%d_%H%M%S_%f')}"
     job_dir = shared / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -92,6 +93,7 @@ def main() -> None:
         "base_model": args.base_model,
         "resume_from": args.resume_from,
         "eval_checkpoint": checkpoint,
+        "split": args.split,
         "params": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -120,6 +122,7 @@ def main() -> None:
             print(f"  Resume from: {args.resume_from}")
     elif args.type == "eval":
         print(f"  Checkpoint: {checkpoint}")
+        print(f"  Split:      {args.split}")
     else:
         print(f"  Checkpoint: {args.checkpoint}")
         print(f"  Infer batch: {args.infer_batch_size}")

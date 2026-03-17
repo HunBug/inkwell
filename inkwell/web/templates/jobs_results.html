@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Results — Inkwell{% endblock %}
+
+{% block extra_css %}
+<style>
+.results-header {
+  margin-bottom: 1rem;
+}
+.results-header .path {
+  font-size: 0.8rem;
+  color: #666;
+  font-family: monospace;
+}
+.dataset-card {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.dataset-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+.dataset-id {
+  font-family: monospace;
+  font-weight: 700;
+}
+.badge {
+  font-size: 0.75rem;
+  border-radius: 10px;
+  padding: 0.15rem 0.6rem;
+  background: #eef3ff;
+  color: #2b4f9f;
+}
+.small {
+  font-size: 0.85rem;
+  color: #666;
+}
+.metrics {
+  display: flex;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0.8rem;
+}
+.metric {
+  font-size: 0.88rem;
+}
+.metric strong {
+  font-size: 1rem;
+}
+.section-title {
+  margin-top: 0.8rem;
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+th, td {
+  border: 1px solid #ececec;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+th { background: #fafafa; }
+.muted { color: #999; }
+.good { color: #1e7e34; font-weight: 700; }
+.link-row {
+  margin-bottom: 0.7rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="results-header">
+  <h2>Experiment Results</h2>
+  <div class="path">{{ shared_path }}</div>
+</div>
+
+<div class="link-row">
+  <a href="/jobs">← Back to Jobs</a>
+</div>
+
+{% if not summaries %}
+  <div class="dataset-card">No datasets found under shared path.</div>
+{% endif %}
+
+{% for ds in summaries %}
+  <div class="dataset-card">
+    <div class="dataset-title">
+      <span class="dataset-id">{{ ds.dataset_id }}</span>
+      {% if ds.policy_name %}<span class="badge">policy: {{ ds.policy_name }}</span>{% endif %}
+      <span class="small">counts: train {{ ds.counts.train }} · val {{ ds.counts.val }} · test {{ ds.counts.test }} · total {{ ds.counts.total }}</span>
+    </div>
+
+    {% if ds.policy_dropped is not none or ds.policy_transformed is not none %}
+    <div class="metrics">
+      {% if ds.policy_dropped is not none %}<div class="metric">policy dropped: <strong>{{ ds.policy_dropped }}</strong></div>{% endif %}
+      {% if ds.policy_transformed is not none %}<div class="metric">policy transformed: <strong>{{ ds.policy_transformed }}</strong></div>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="section-title">Baseline Eval ({{ baseline_model }})</div>
+    <table>
+      <thead>
+        <tr><th>Split</th><th>CER</th><th>WER</th><th>Run</th><th>Age</th></tr>
+      </thead>
+      <tbody>
+        {% for split in ['val','test'] %}
+          {% set ev = ds.baseline_evals.get(split) %}
+          <tr>
+            <td>{{ split }}</td>
+            {% if ev and ev.result %}
+              <td>{{ '%.4f'|format(ev.result.get('cer')) if ev.result.get('cer') is not none else '-' }}</td>
+              <td>{{ '%.4f'|format(ev.result.get('wer')) if ev.result.get('wer') is not none else '-' }}</td>
+              <td>{{ ev.job_id }}</td>
+              <td>{{ age(ev.created_at) }}</td>
+            {% else %}
+              <td class="muted">no eval</td>
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-title">Fine-tune Runs</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>Age</th>
+          <th>Train Val CER</th>
+          <th>Eval Val CER</th>
+          <th>Eval Test CER</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not ds.finetunes %}
+          <tr><td colspan="5" class="muted">No completed finetune runs for this dataset.</td></tr>
+        {% endif %}
+        {% for ft in ds.finetunes %}
+          <tr>
+            <td>{{ ft.job_id }}</td>
+            <td>{{ age(ft.created_at) }}</td>
+            <td>{{ '%.4f'|format(ft.train_val_cer) if ft.train_val_cer is not none else '-' }}</td>
+            <td>
+              {% set evv = ft.eval.get('val') %}
+              {% if evv and evv.result and evv.result.get('cer') is not none %}
+                {{ '%.4f'|format(evv.result.get('cer')) }}
+              {% else %}
+                <span class="muted">no eval</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set evt = ft.eval.get('test') %}
+              {% if evt and evt.result and evt.result.get('cer') is not none %}
+                {{ '%.4f'|format(evt.result.get('cer')) }}
+              {% else %}
+                <span class="muted">no eval</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if ds.best_val_eval and ds.best_val_eval.eval.get('val') and ds.best_val_eval.eval.get('val').result %}
+      {% set best = ds.best_val_eval.eval.get('val').result.get('cer') %}
+      {% if best is not none %}
+      <div class="metrics" style="margin-top:0.7rem;">
+        <div class="metric good">Best eval val CER: {{ '%.4f'|format(best) }} ({{ ds.best_val_eval.job_id }})</div>
+      </div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endfor %}
+{% endblock %}

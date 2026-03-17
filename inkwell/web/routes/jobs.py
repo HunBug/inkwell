@@ -514,32 +514,51 @@ def _load_datasets_with_eval_status(shared: Path, jobs: list[dict]) -> list[dict
         dataset_id = d.name
         eval_jobs = eval_by_dataset.get(dataset_id, [])
 
-        # --- Baseline eval status ---
-        baseline_eval = None
-        baseline_eval_pending = False
-        for ej in eval_jobs:
-            cp = ej.get("eval_checkpoint", "") or ""
-            if BASELINE_MODEL in cp or cp == BASELINE_MODEL:
-                if ej.get("status") == "completed":
-                    baseline_eval = ej
-                    break
-                if ej.get("status") in ("pending", "running"):
-                    baseline_eval_pending = True
+        # --- Baseline eval status by split ---
+        baseline_eval: dict[str, dict | None] = {"val": None, "test": None}
+        baseline_eval_pending: dict[str, bool] = {"val": False, "test": False}
+        for split in ("val", "test"):
+            completed = [
+                ej for ej in eval_jobs
+                if (ej.get("split", "val") == split)
+                and (BASELINE_MODEL in (ej.get("eval_checkpoint", "") or "") or (ej.get("eval_checkpoint") or "") == BASELINE_MODEL)
+                and ej.get("status") == "completed"
+            ]
+            if completed:
+                completed = sorted(completed, key=lambda x: x.get("created_at", ""), reverse=True)
+                baseline_eval[split] = completed[0]
+
+            baseline_eval_pending[split] = any(
+                (ej.get("split", "val") == split)
+                and (BASELINE_MODEL in (ej.get("eval_checkpoint", "") or "") or (ej.get("eval_checkpoint") or "") == BASELINE_MODEL)
+                and ej.get("status") in ("pending", "running")
+                for ej in eval_jobs
+            )
 
         # --- Fine-tuned checkpoints with their eval status ---
         finetuned_with_eval = []
         for ft_job in finetuned_by_dataset.get(dataset_id, []):
             ft_id = ft_job.get("job_id", "")
             cp_suffix = f"{ft_id}/checkpoints/best"
-            ft_eval = None
-            ft_eval_pending = False
-            for ej in eval_jobs:
-                cp = ej.get("eval_checkpoint", "") or ""
-                if cp_suffix in cp:
-                    if ej.get("status") == "completed":
-                        ft_eval = ej
-                    elif ej.get("status") in ("pending", "running"):
-                        ft_eval_pending = True
+            ft_eval: dict[str, dict | None] = {"val": None, "test": None}
+            ft_eval_pending: dict[str, bool] = {"val": False, "test": False}
+            for split in ("val", "test"):
+                completed = [
+                    ej for ej in eval_jobs
+                    if (ej.get("split", "val") == split)
+                    and cp_suffix in (ej.get("eval_checkpoint", "") or "")
+                    and ej.get("status") == "completed"
+                ]
+                if completed:
+                    completed = sorted(completed, key=lambda x: x.get("created_at", ""), reverse=True)
+                    ft_eval[split] = completed[0]
+
+                ft_eval_pending[split] = any(
+                    (ej.get("split", "val") == split)
+                    and cp_suffix in (ej.get("eval_checkpoint", "") or "")
+                    and ej.get("status") in ("pending", "running")
+                    for ej in eval_jobs
+                )
             finetuned_with_eval.append({
                 "job_id": ft_id,
                 "created_at": ft_job.get("created_at", ""),
@@ -565,7 +584,7 @@ def _load_datasets_with_eval_status(shared: Path, jobs: list[dict]) -> list[dict
 
 def _submit_eval_job(shared: Path, dataset_id: str, checkpoint: str, split: str = "val") -> str:
     """Write an eval job into the shared jobs folder.  Returns the new job_id."""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     job_id = f"eval_{ts}"
     job_dir = shared / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -590,6 +609,111 @@ def _submit_eval_job(shared: Path, dataset_id: str, checkpoint: str, split: str 
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2))
     return job_id
+
+
+def _build_results_summary(shared: Path, jobs: list[dict]) -> list[dict]:
+    datasets_dir = shared / "datasets"
+    if not datasets_dir.exists():
+        return []
+
+    eval_jobs = [j for j in jobs if j.get("type") == "eval"]
+    finetune_jobs = [
+        j for j in jobs
+        if j.get("type") == "finetune" and j.get("status") == "completed"
+    ]
+
+    summaries: list[dict] = []
+    for d in sorted(datasets_dir.iterdir(), key=lambda p: p.name, reverse=True):
+        if not d.is_dir():
+            continue
+
+        manifest: dict = {}
+        mf = d / "manifest.json"
+        if mf.exists():
+            try:
+                manifest = json.loads(mf.read_text())
+            except Exception:
+                manifest = {}
+
+        dataset_id = d.name
+        counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+        policy = manifest.get("text_policy") if isinstance(manifest.get("text_policy"), dict) else {}
+
+        dataset_finetunes = sorted(
+            [j for j in finetune_jobs if j.get("dataset_id") == dataset_id],
+            key=lambda x: x.get("created_at", ""),
+            reverse=True,
+        )
+        dataset_evals = [j for j in eval_jobs if j.get("dataset_id") == dataset_id]
+
+        baseline_evals: dict[str, dict] = {}
+        for split in ("val", "test"):
+            completed = [
+                e for e in dataset_evals
+                if (e.get("split", "val") == split)
+                and e.get("status") == "completed"
+                and (e.get("eval_checkpoint") == BASELINE_MODEL or BASELINE_MODEL in (e.get("eval_checkpoint") or ""))
+            ]
+            if completed:
+                completed = sorted(completed, key=lambda x: x.get("created_at", ""), reverse=True)
+                baseline_evals[split] = completed[0]
+
+        finetune_rows: list[dict] = []
+        for ft in dataset_finetunes:
+            ft_id = ft.get("job_id", "")
+            cp_suffix = f"{ft_id}/checkpoints/best"
+            eval_by_split: dict[str, dict] = {}
+            for split in ("val", "test"):
+                completed = [
+                    e for e in dataset_evals
+                    if (e.get("split", "val") == split)
+                    and e.get("status") == "completed"
+                    and cp_suffix in (e.get("eval_checkpoint") or "")
+                ]
+                if completed:
+                    completed = sorted(completed, key=lambda x: x.get("created_at", ""), reverse=True)
+                    eval_by_split[split] = completed[0]
+
+            finetune_rows.append({
+                "job_id": ft_id,
+                "created_at": ft.get("created_at"),
+                "train_val_cer": (ft.get("result") or {}).get("final_val_cer"),
+                "train_loss": (ft.get("result") or {}).get("final_train_loss"),
+                "eval": eval_by_split,
+            })
+
+        best_val_eval = None
+        best_val_cer = None
+        for row in finetune_rows:
+            ev = row.get("eval", {}).get("val")
+            if not ev:
+                continue
+            cer = (ev.get("result") or {}).get("cer")
+            if cer is None:
+                continue
+            if best_val_cer is None or cer < best_val_cer:
+                best_val_cer = cer
+                best_val_eval = row
+
+        summaries.append({
+            "dataset_id": dataset_id,
+            "manifest": manifest,
+            "counts": {
+                "train": counts.get("train", "?"),
+                "val": counts.get("val", "?"),
+                "test": counts.get("test", "?"),
+                "total": manifest.get("total", "?"),
+            },
+            "policy_name": policy.get("name"),
+            "policy_dropped": manifest.get("dropped_by_text_policy"),
+            "policy_transformed": manifest.get("transformed_by_text_policy"),
+            "baseline_evals": baseline_evals,
+            "finetunes": finetune_rows,
+            "best_val_eval": best_val_eval,
+            "latest_finetune": finetune_rows[0] if finetune_rows else None,
+        })
+
+    return summaries
 
 
 def _age(iso_str: str) -> str:
@@ -644,6 +768,20 @@ def index():
         cfg_summary=cfg_summary,
         pending_count=pending_count,
         running_count=running_count,
+        baseline_model=BASELINE_MODEL,
+        age=_age,
+    )
+
+
+@jobs_bp.route("/results")
+def results():
+    shared = _get_shared_path()
+    jobs = _load_jobs()
+    summaries = _build_results_summary(shared, jobs)
+    return render_template(
+        "jobs_results.html",
+        shared_path=str(shared),
+        summaries=summaries,
         baseline_model=BASELINE_MODEL,
         age=_age,
     )

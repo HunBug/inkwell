@@ -235,6 +235,10 @@ def ensure_dataset(cfg: dict, shared: Path) -> Path:
         "--dataset-id",
         dataset_id,
     ]
+    text_policy_cfg = cfg.get("text_policy", {})
+    policy_profile = text_policy_cfg.get("profile") if isinstance(text_policy_cfg, dict) else None
+    if policy_profile:
+        cmd.extend(["--policy-profile", str(policy_profile)])
     if force_reexport:
         cmd.append("--force")
     result = run_cmd(cmd, cwd=PROJECT_ROOT)

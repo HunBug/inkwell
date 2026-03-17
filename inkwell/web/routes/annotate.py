@@ -2,15 +2,33 @@ from __future__ import annotations
 
 import io
 import json
+import os
 
 from flask import Blueprint, render_template, request, jsonify, current_app, g, send_file
 from pathlib import Path
 from PIL import Image
 
 from inkwell.db import get_connection, DEFAULT_DB_PATH
+from inkwell.cropping import (
+    bounds_from_polygon,
+    parse_polygon_coords,
+    polygon_bounds,
+)
+from inkwell.text_policy import (
+    ensure_text_policy_table,
+    load_text_policy_from_automation_toml,
+    summarize_text_policy_rows,
+)
 
 
 annotate_bp = Blueprint("annotate", __name__, url_prefix="/annotate")
+
+
+_POOL_PREDICTIONS_CACHE: dict = {
+    "path": None,
+    "mtime": None,
+    "map": {},
+}
 
 
 ACCENT_NORMALIZATION = str.maketrans({
@@ -35,7 +53,41 @@ def get_db():
         # Ensure flag column exists (migration)
         _ensure_flag_column(g.db)
         _ensure_annotation_indexes(g.db)
+        _ensure_segmentation_tuning_table(g.db)
+        ensure_text_policy_table(g.db)
     return g.db
+
+
+def _load_active_text_policy() -> dict:
+    return load_text_policy_from_automation_toml(
+        Path(current_app.root_path).parents[1] / "automation.toml"
+    )
+
+
+def _get_gt_rows_for_quality(db) -> list[dict]:
+    rows = db.execute(
+        """
+                WITH latest_human AS (
+                        SELECT line_id, MAX(id) AS latest_id
+                        FROM transcriptions
+                        WHERE transcription_type = 'HUMAN_CORRECTED'
+                            AND immutable = 1
+                        GROUP BY line_id
+                )
+        SELECT
+            t.line_id,
+            t.text,
+            COALESCE(ds.split, 'train') AS split
+                FROM latest_human lh
+                JOIN transcriptions t ON t.id = lh.latest_id
+        JOIN lines l ON l.id = t.line_id
+        LEFT JOIN dataset_splits ds ON ds.page_id = l.page_id
+                WHERE (t.flag IS NULL OR t.flag NOT IN ('UNUSABLE_SEGMENTATION', 'NOT_TEXT'))
+          AND l.skip = 0
+                ORDER BY t.id DESC
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _ensure_flag_column(db):
@@ -65,6 +117,30 @@ def _ensure_annotation_indexes(db):
         """
     )
     db.commit()
+
+
+def _ensure_segmentation_tuning_table(db):
+        """Create segmentation tuning config table if missing."""
+        db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS segmentation_tuning_configs (
+                    id                   INTEGER PRIMARY KEY,
+                    source               TEXT NOT NULL DEFAULT 'segment_tuning_ui',
+                    segmenter            TEXT NOT NULL DEFAULT 'cv_projection',
+                    params_json          TEXT NOT NULL,
+                    issue_n              INTEGER NOT NULL DEFAULT 0,
+                    clean_n              INTEGER NOT NULL DEFAULT 0,
+                    sample_line_ids_json TEXT,
+                    notes                TEXT,
+                    created_by           TEXT NOT NULL DEFAULT 'human',
+                    created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_seg_tuning_configs_created_at
+                ON segmentation_tuning_configs(created_at DESC);
+                """
+        )
+        db.commit()
 
 
 def _get_random_unannotated_line(db):
@@ -109,6 +185,116 @@ def _get_random_unannotated_line(db):
 
 def _working_root() -> Path:
     return DEFAULT_DB_PATH.parent
+
+
+def _resolve_shared_root() -> Path | None:
+    configured = current_app.config.get("INKWELL_SHARED") or os.environ.get("INKWELL_SHARED")
+    if configured:
+        p = Path(configured).expanduser().resolve()
+        return p if p.exists() else None
+
+    network_default = Path("/home/akoss/mnt/lara-playground/playground/inkwell-automation")
+    if network_default.exists():
+        return network_default
+
+    local_fallback = _working_root() / "shared"
+    return local_fallback if local_fallback.exists() else None
+
+
+def _find_latest_infer_pool_predictions(shared: Path | None) -> Path | None:
+    if shared is None or not shared.exists():
+        return None
+
+    jobs_dir = shared / "jobs"
+    if not jobs_dir.exists():
+        return None
+
+    best: tuple[str, Path] | None = None
+    for d in sorted(jobs_dir.iterdir()):
+        if not d.name.startswith("infer_pool_"):
+            continue
+
+        result_file = d / "result.json"
+        preds_file = d / "pool_predictions.jsonl"
+        if not result_file.exists() or not preds_file.exists():
+            continue
+
+        try:
+            result = json.loads(result_file.read_text())
+        except Exception:
+            continue
+
+        if result.get("status") != "completed":
+            continue
+
+        finished_at = result.get("finished_at", "")
+        if best is None or finished_at > best[0]:
+            best = (finished_at, preds_file)
+
+    return best[1] if best else None
+
+
+def _load_latest_pool_predictions_map() -> dict[int, str]:
+    shared = _resolve_shared_root()
+    preds_path = _find_latest_infer_pool_predictions(shared)
+    if preds_path is None:
+        _POOL_PREDICTIONS_CACHE["path"] = None
+        _POOL_PREDICTIONS_CACHE["mtime"] = None
+        _POOL_PREDICTIONS_CACHE["map"] = {}
+        return {}
+
+    try:
+        mtime = preds_path.stat().st_mtime
+    except Exception:
+        return {}
+
+    if (
+        _POOL_PREDICTIONS_CACHE.get("path") == str(preds_path)
+        and _POOL_PREDICTIONS_CACHE.get("mtime") == mtime
+    ):
+        return _POOL_PREDICTIONS_CACHE.get("map", {})
+
+    out: dict[int, str] = {}
+    try:
+        with open(preds_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    line_id = row.get("line_id")
+                    pred = row.get("predicted_text")
+                    if isinstance(line_id, int) and isinstance(pred, str):
+                        out[line_id] = pred.strip()
+                except Exception:
+                    continue
+    except Exception:
+        out = {}
+
+    _POOL_PREDICTIONS_CACHE["path"] = str(preds_path)
+    _POOL_PREDICTIONS_CACHE["mtime"] = mtime
+    _POOL_PREDICTIONS_CACHE["map"] = out
+    return out
+
+
+def _apply_live_pool_ocr(row):
+    if not row:
+        return row
+
+    item = dict(row)
+    predictions = _load_latest_pool_predictions_map()
+    predicted = predictions.get(item.get("line_id"))
+
+    if predicted:
+        item["ocr_text"] = predicted
+        item["confidence"] = None
+        item["model_version"] = "infer_pool_latest"
+        item["ocr_source"] = "pool_predictions"
+    else:
+        item["ocr_source"] = "db_ocr_auto"
+
+    return item
 
 
 def _suggestions_dir() -> Path:
@@ -202,8 +388,282 @@ def _get_next_suggested_unannotated_line(db, suggestion_filename: str | None):
 
 def _pick_line(db, suggestion_filename: str | None = None):
     if suggestion_filename:
-        return _get_next_suggested_unannotated_line(db, suggestion_filename)
-    return _get_random_unannotated_line(db)
+        row = _get_next_suggested_unannotated_line(db, suggestion_filename)
+    else:
+        row = _get_random_unannotated_line(db)
+    return _apply_live_pool_ocr(row)
+
+
+def _parse_int_param(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, value))
+
+
+def _sample_segmentation_tuning_lines(db, issue_n: int, clean_n: int) -> list[dict]:
+    issue_rows = db.execute(
+        """
+        WITH latest_human AS (
+            SELECT t.line_id, t.flag, t.id
+            FROM transcriptions t
+            JOIN (
+                SELECT line_id, MAX(id) AS latest_id
+                FROM transcriptions
+                WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+                GROUP BY line_id
+            ) latest ON latest.latest_id = t.id
+        )
+        SELECT
+            l.id AS line_id,
+            l.crop_image_path,
+            p.derived_image_path,
+            l.polygon_coords,
+            COALESCE(latest_human.flag, '') AS flag
+        FROM latest_human
+        JOIN lines l ON l.id = latest_human.line_id
+        JOIN pages p ON p.id = l.page_id
+        WHERE l.skip = 0
+          AND l.crop_image_path IS NOT NULL
+          AND l.polygon_coords IS NOT NULL
+          AND p.derived_image_path IS NOT NULL
+          AND (
+              latest_human.flag LIKE '%SEGMENTATION_ISSUE%'
+              OR latest_human.flag LIKE '%UNUSABLE_SEGMENTATION%'
+          )
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+        (issue_n,),
+    ).fetchall()
+
+    clean_rows = db.execute(
+        """
+        WITH latest_human AS (
+            SELECT t.line_id, t.flag, t.id
+            FROM transcriptions t
+            JOIN (
+                SELECT line_id, MAX(id) AS latest_id
+                FROM transcriptions
+                WHERE transcription_type IN ('HUMAN_CORRECTED', 'FLAGGED')
+                GROUP BY line_id
+            ) latest ON latest.latest_id = t.id
+        )
+        SELECT
+            l.id AS line_id,
+            l.crop_image_path,
+            p.derived_image_path,
+            l.polygon_coords,
+            COALESCE(latest_human.flag, '') AS flag
+        FROM latest_human
+        JOIN lines l ON l.id = latest_human.line_id
+        JOIN pages p ON p.id = l.page_id
+        WHERE l.skip = 0
+          AND l.crop_image_path IS NOT NULL
+          AND l.polygon_coords IS NOT NULL
+          AND p.derived_image_path IS NOT NULL
+          AND (
+              latest_human.flag IS NULL
+              OR (
+                  latest_human.flag NOT LIKE '%SEGMENTATION_ISSUE%'
+                  AND latest_human.flag NOT LIKE '%UNUSABLE_SEGMENTATION%'
+              )
+          )
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+        (clean_n,),
+    ).fetchall()
+
+    samples = []
+    for row in issue_rows:
+        samples.append({
+            "line_id": row["line_id"],
+            "crop_path": row["crop_image_path"],
+            "flag": row["flag"],
+            "bucket": "issue",
+        })
+    for row in clean_rows:
+        samples.append({
+            "line_id": row["line_id"],
+            "crop_path": row["crop_image_path"],
+            "flag": row["flag"],
+            "bucket": "clean",
+        })
+
+    return samples
+
+
+@annotate_bp.route("/segment-tuning")
+def segment_tuning():
+    db = get_db()
+    issue_n = _parse_int_param("issue_n", 12, 1, 50)
+    clean_n = _parse_int_param("clean_n", 6, 0, 50)
+
+    samples = _sample_segmentation_tuning_lines(db, issue_n=issue_n, clean_n=clean_n)
+
+    defaults = {
+        "top_extra": _parse_int_param("top_extra", 8, -40, 120),
+        "bottom_extra": _parse_int_param("bottom_extra", 0, -40, 120),
+        "left_extra": _parse_int_param("left_extra", 0, -40, 120),
+        "right_extra": _parse_int_param("right_extra", 0, -40, 120),
+    }
+
+    return render_template(
+        "annotate/segment_tuning.html",
+        samples=samples,
+        defaults=defaults,
+        issue_n=issue_n,
+        clean_n=clean_n,
+    )
+
+
+@annotate_bp.route("/segment-tuning/api/crop/<int:line_id>")
+def api_segment_tuning_crop(line_id: int):
+    db = get_db()
+    top_extra = _parse_int_param("top_extra", 8, -40, 120)
+    bottom_extra = _parse_int_param("bottom_extra", 0, -40, 120)
+    left_extra = _parse_int_param("left_extra", 0, -40, 120)
+    right_extra = _parse_int_param("right_extra", 0, -40, 120)
+
+    row = db.execute(
+        """
+        SELECT l.polygon_coords, p.derived_image_path
+        FROM lines l
+        JOIN pages p ON p.id = l.page_id
+        WHERE l.id = ?
+          AND l.skip = 0
+          AND l.polygon_coords IS NOT NULL
+          AND p.derived_image_path IS NOT NULL
+        LIMIT 1
+        """,
+        (line_id,),
+    ).fetchone()
+
+    if not row:
+        return "", 404
+
+    try:
+        points = parse_polygon_coords(row["polygon_coords"])
+
+        page_path = DEFAULT_DB_PATH.parent / row["derived_image_path"]
+        if not page_path.exists():
+            return "", 404
+
+        with Image.open(page_path) as img:
+            w, h = img.size
+
+            bounds = bounds_from_polygon(
+                points,
+                img_w=w,
+                img_h=h,
+                top_extra=top_extra,
+                bottom_extra=bottom_extra,
+                left_extra=left_extra,
+                right_extra=right_extra,
+            )
+            if bounds is None:
+                return jsonify({"error": "Invalid crop region with current margins"}), 400
+
+            cx1, cy1, cx2, cy2 = bounds
+
+            cropped = img.crop((cx1, cy1, cx2 + 1, cy2 + 1))
+            buf = io.BytesIO()
+            cropped.save(buf, format="JPEG", quality=90)
+            buf.seek(0)
+            return send_file(buf, mimetype="image/jpeg")
+    except Exception as e:
+        current_app.logger.error(f"Segment tuning crop failed for line {line_id}: {e}")
+        return "", 500
+
+
+@annotate_bp.route("/segment-tuning/api/save-config", methods=["POST"])
+def api_segment_tuning_save_config():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+
+    segmenter = (data.get("segmenter") or "cv_projection").strip() or "cv_projection"
+    notes = (data.get("notes") or "").strip()
+
+    params = data.get("params") or {}
+    if not isinstance(params, dict):
+        return jsonify({"error": "params must be an object"}), 400
+
+    allowed_keys = ("top_extra", "bottom_extra", "left_extra", "right_extra")
+    normalized_params: dict[str, int] = {}
+    for key in allowed_keys:
+        raw = params.get(key, 0)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        normalized_params[key] = max(-40, min(120, value))
+
+    issue_n = data.get("issue_n", 0)
+    clean_n = data.get("clean_n", 0)
+    try:
+        issue_n = max(0, int(issue_n))
+    except (TypeError, ValueError):
+        issue_n = 0
+    try:
+        clean_n = max(0, int(clean_n))
+    except (TypeError, ValueError):
+        clean_n = 0
+
+    raw_ids = data.get("sample_line_ids") or []
+    sample_line_ids: list[int] = []
+    if isinstance(raw_ids, list):
+        for value in raw_ids:
+            try:
+                sample_line_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+
+    try:
+        cursor = db.execute(
+            """
+            INSERT INTO segmentation_tuning_configs (
+                segmenter,
+                params_json,
+                issue_n,
+                clean_n,
+                sample_line_ids_json,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                segmenter,
+                json.dumps(normalized_params, ensure_ascii=False),
+                issue_n,
+                clean_n,
+                json.dumps(sample_line_ids),
+                notes or None,
+            ),
+        )
+        config_id = cursor.lastrowid
+        db.commit()
+
+        created = db.execute(
+            "SELECT created_at FROM segmentation_tuning_configs WHERE id = ?",
+            (config_id,),
+        ).fetchone()
+        created_at = created["created_at"] if created else None
+
+        return jsonify({
+            "success": True,
+            "config_id": config_id,
+            "created_at": created_at,
+            "segmenter": segmenter,
+            "params": normalized_params,
+        })
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
 
 
 @annotate_bp.route("/api/context/<int:line_id>")
@@ -221,9 +681,8 @@ def api_context(line_id: int):
         return "", 404
 
     try:
-        coords = json.loads(row["polygon_coords"])  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-        ys = [pt[1] for pt in coords]
-        y1, y2 = min(ys), max(ys)
+        points = parse_polygon_coords(row["polygon_coords"])
+        _, y1, _, y2 = polygon_bounds(points)
         line_h = y2 - y1
         padding = max(line_h, 60)  # at least 60px, or one line-height worth of context
 
@@ -283,6 +742,7 @@ def index():
             "ocr_text": row["ocr_text"],
             "confidence": f"{conf:.1%}" if conf is not None else "N/A",
             "model": row["model_version"],
+            "ocr_source": row.get("ocr_source", "db_ocr_auto"),
         },
         stats=stats,
         suggestion_mode=bool(suggestion_file),
@@ -321,6 +781,7 @@ def api_next():
             "ocr_text": row["ocr_text"],
             "confidence": f"{conf:.1%}" if conf is not None else "N/A",
             "model": row["model_version"],
+            "ocr_source": row.get("ocr_source", "db_ocr_auto"),
         },
         "stats": get_stats(db),
     })
@@ -559,10 +1020,19 @@ def get_stats(db) -> dict:
     annotated = annotated_row["annotated"] or 0
     percent = (annotated / total * 100) if total > 0 else 0
 
+    policy = _load_active_text_policy()
+    gt_rows = _get_gt_rows_for_quality(db)
+    quality = summarize_text_policy_rows(gt_rows, policy)
+
     return {
         "total": total,
         "annotated": annotated,
         "remaining": total - annotated,
         "percent": percent,
         "progress": f"{annotated}/{total} ({percent:.1f}%)" if total > 0 else "0/0 (0.0%)",
+        "policy": {
+            "name": policy.get("name"),
+            "version": policy.get("version"),
+        },
+        "quality": quality,
     }

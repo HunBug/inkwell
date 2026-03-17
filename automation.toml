@@ -30,19 +30,57 @@ require_no_active_jobs = true
 
 [dataset]
 # Reused by default. Change this when you want a new frozen export.
-dataset_id = "gt_20260312_round1"
+dataset_id = "gt_20260317_round3"
 # If false and the dataset folder already exists, it is reused as-is.
 force_reexport = false
 # If true, the launcher will rsync the chosen dataset to gpu.remote_dataset_cache_root
 # using ssh user@host. If your worker reads directly from shared.path, set this to false.
 sync_to_gpu_cache = true
 
+[text_policy]
+# Active marker policy profile used by export_gt/run_automation.
+profile = "readable_text_v1"
+
+[text_policy.profiles.readable_text_v1]
+name = "readable_text_v1"
+version = 1
+
+[text_policy.profiles.readable_text_v1.unknown_bracket_action]
+train = "drop_line"
+val = "drop_line"
+test = "drop_line"
+
+[text_policy.profiles.readable_text_v1.empty_after_transform_action]
+train = "drop_line"
+val = "drop_line"
+test = "drop_line"
+
+[text_policy.profiles.readable_text_v1.markers.nt]
+train = "remove_span"
+val = "drop_line"
+test = "drop_line"
+
+[text_policy.profiles.readable_text_v1.markers.nr]
+train = "remove_span"
+val = "drop_line"
+test = "drop_line"
+
+[text_policy.profiles.readable_text_v1.markers.ur]
+train = "remove_span"
+val = "drop_line"
+test = "drop_line"
+
+[text_policy.profiles.readable_text_v1.markers."?"]
+train = "drop_line"
+val = "drop_line"
+test = "drop_line"
+
 [job]
 type = "finetune"  # or "eval"
-label = "default-finetune"
+label = "round2_full_retrain"
 base_model = "microsoft/trocr-base-handwritten"
 resume_from = ""
 eval_checkpoint = ""
-epochs = 10
+epochs = 30
 batch_size = 8
 learning_rate = 5e-5

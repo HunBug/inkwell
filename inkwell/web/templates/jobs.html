@@ -433,54 +433,71 @@
         <span class="dataset-id">{{ ds.dataset_id }}</span>
         <span class="dataset-counts">
             train: {{ ds.train_count }} &nbsp; val: {{ ds.val_count }} &nbsp; test: {{ ds.test_count }}
+            {% if ds.manifest and ds.manifest.get('text_policy') %}
+                &nbsp; · &nbsp; policy: {{ ds.manifest.get('text_policy', {}).get('name', '?') }}
+            {% endif %}
+            {% if ds.manifest %}
+                {% if ds.manifest.get('dropped_by_text_policy') is not none %}
+                    &nbsp; · &nbsp; dropped: {{ ds.manifest.get('dropped_by_text_policy') }}
+                {% endif %}
+                {% if ds.manifest.get('transformed_by_text_policy') is not none %}
+                    &nbsp; · &nbsp; transformed: {{ ds.manifest.get('transformed_by_text_policy') }}
+                {% endif %}
+            {% endif %}
         </span>
 
         <div class="eval-group">
             {# --- Baseline eval --- #}
             <span class="eval-label">baseline:</span>
-            {% if ds.baseline_eval %}
-                {% set cer = ds.baseline_eval.result.get('cer') if ds.baseline_eval.result else None %}
-                {% if cer is not none %}
-                    <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
-                        CER {{ "%.1f"|format(cer * 100) }}%
-                    </span>
+            {% for split in ['val', 'test'] %}
+                {% set bev = ds.baseline_eval.get(split) if ds.baseline_eval else None %}
+                {% if bev %}
+                    {% set cer = bev.result.get('cer') if bev.result else None %}
+                    {% if cer is not none %}
+                        <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
+                            {{ split }} CER {{ "%.1f"|format(cer * 100) }}%
+                        </span>
+                    {% else %}
+                        <span class="cer-badge">{{ split }} done</span>
+                    {% endif %}
+                {% elif ds.baseline_eval_pending and ds.baseline_eval_pending.get(split) %}
+                    <span class="eval-pending-pill">{{ split }} queued / running</span>
                 {% else %}
-                    <span class="cer-badge">done</span>
+                    <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
+                        <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
+                        <input type="hidden" name="checkpoint" value="{{ baseline_model }}">
+                        <input type="hidden" name="split" value="{{ split }}">
+                        <button type="submit" class="eval-btn baseline-btn">▶ Eval baseline {{ split }}</button>
+                    </form>
                 {% endif %}
-            {% elif ds.baseline_eval_pending %}
-                <span class="eval-pending-pill">queued / running</span>
-            {% else %}
-                <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
-                    <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
-                    <input type="hidden" name="checkpoint" value="{{ baseline_model }}">
-                    <input type="hidden" name="split" value="val">
-                    <button type="submit" class="eval-btn baseline-btn">▶ Eval baseline</button>
-                </form>
-            {% endif %}
+            {% endfor %}
 
             {# --- Fine-tuned evals --- #}
             {% for ft in ds.finetuned %}
             <span style="color:#ccc">|</span>
             <span class="eval-label" title="{{ ft.job_id }}">{{ ft.job_id[:22] }}:</span>
-            {% if ft.eval %}
-                {% set cer = ft.eval.result.get('cer') if ft.eval.result else None %}
-                {% if cer is not none %}
-                    <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
-                        CER {{ "%.1f"|format(cer * 100) }}%
-                    </span>
+            {% for split in ['val', 'test'] %}
+                {% set fev = ft.eval.get(split) if ft.eval else None %}
+                {% if fev %}
+                    {% set cer = fev.result.get('cer') if fev.result else None %}
+                    {% if cer is not none %}
+                        <span class="cer-badge {{ 'good' if cer < 0.3 else 'meh' if cer < 0.6 else '' }}">
+                            {{ split }} CER {{ "%.1f"|format(cer * 100) }}%
+                        </span>
+                    {% else %}
+                        <span class="cer-badge">{{ split }} done</span>
+                    {% endif %}
+                {% elif ft.eval_pending and ft.eval_pending.get(split) %}
+                    <span class="eval-pending-pill">{{ split }} queued / running</span>
                 {% else %}
-                    <span class="cer-badge">done</span>
+                    <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
+                        <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
+                        <input type="hidden" name="checkpoint" value="{{ ft.job_id }}">
+                        <input type="hidden" name="split" value="{{ split }}">
+                        <button type="submit" class="eval-btn">▶ Eval fine-tuned {{ split }}</button>
+                    </form>
                 {% endif %}
-            {% elif ft.eval_pending %}
-                <span class="eval-pending-pill">queued / running</span>
-            {% else %}
-                <form method="post" action="{{ url_for('jobs.submit_eval') }}" style="display:inline">
-                    <input type="hidden" name="dataset_id" value="{{ ds.dataset_id }}">
-                    <input type="hidden" name="checkpoint" value="{{ ft.job_id }}">
-                    <input type="hidden" name="split" value="val">
-                    <button type="submit" class="eval-btn">▶ Eval fine-tuned</button>
-                </form>
-            {% endif %}
+            {% endfor %}
             {% endfor %}
         </div>
     </div>

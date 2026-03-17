@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inkwell - Segmentation Tuning</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .top-nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background: #2c3e50;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 20;
+        }
+
+        .top-nav .brand {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .top-nav .links a {
+            color: #3498db;
+            text-decoration: none;
+            margin-left: 14px;
+            font-size: 14px;
+        }
+
+        .top-nav .links a:hover {
+            text-decoration: underline;
+        }
+
+        .page {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 76px 20px 24px;
+        }
+
+        .title {
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+
+        .controls {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 14px;
+            margin-bottom: 16px;
+        }
+
+        .control-row {
+            display: grid;
+            grid-template-columns: 140px 1fr 90px;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .control-row label {
+            font-size: 13px;
+            color: #444;
+            font-weight: 600;
+        }
+
+        .control-row input[type="range"] {
+            width: 100%;
+        }
+
+        .control-row input[type="number"],
+        .control-row input[type="text"] {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .save-row {
+            display: grid;
+            grid-template-columns: 110px 220px 1fr auto;
+            gap: 10px;
+            align-items: center;
+            margin-top: 12px;
+        }
+
+        .save-row label {
+            font-size: 13px;
+            color: #444;
+            font-weight: 600;
+        }
+
+        .save-row button {
+            border: 1px solid #007bff;
+            background: #007bff;
+            color: #fff;
+            border-radius: 4px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .save-row button:hover {
+            background: #0062cc;
+        }
+
+        .save-status {
+            margin-top: 8px;
+            min-height: 18px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .save-status.error {
+            color: #b00020;
+        }
+
+        .save-status.success {
+            color: #1e6b2c;
+        }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar a {
+            color: #007bff;
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        .toolbar a:hover {
+            text-decoration: underline;
+        }
+
+        .stats {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .card {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .tag.issue {
+            background: #ffe9c7;
+            color: #8a4f00;
+        }
+
+        .tag.clean {
+            background: #e6f4ea;
+            color: #1e6b2c;
+        }
+
+        .flags {
+            color: #777;
+            font-size: 12px;
+            margin-left: 6px;
+            max-width: 70%;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .preview-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 12px;
+        }
+
+        .preview-group {
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background: #fafafa;
+            padding: 8px;
+        }
+
+        .preview-title {
+            font-size: 11px;
+            color: #777;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .img-wrap {
+            overflow-x: auto;
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 3px;
+            margin-bottom: 8px;
+        }
+
+        .img-wrap:last-child {
+            margin-bottom: 0;
+        }
+
+        .img-wrap img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .img-wrap.magnified img {
+            width: 200%;
+            max-width: none;
+            height: auto;
+        }
+
+        .empty {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 16px;
+            color: #666;
+        }
+
+        @media (max-width: 1200px) {
+            .preview-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .save-row {
+                grid-template-columns: 1fr;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-nav">
+        <div class="brand">Inkwell — OCR Pipeline</div>
+        <div class="links">
+            <a href="/">Home</a>
+            <a href="/ingest">Ingest</a>
+            <a href="/annotate">Annotate</a>
+            <a href="/annotate/segment-tuning">Seg Tuning</a>
+            <a href="/jobs">Jobs</a>
+            <a href="/db">DB</a>
+        </div>
+    </div>
+
+    <div class="page">
+        <h2 class="title">Manual Line Segmentation Tuning</h2>
+        <p class="subtitle">Adjust margins and compare current crop vs tuned crop on mixed random samples.</p>
+
+        <div class="controls">
+            <div class="control-row">
+                <label for="top_extra">Top extra (px)</label>
+                <input id="top_extra" type="range" min="-40" max="120" value="{{ defaults.top_extra }}">
+                <input id="top_extra_num" type="number" min="-40" max="120" value="{{ defaults.top_extra }}">
+            </div>
+
+            <div class="control-row">
+                <label for="bottom_extra">Bottom extra (px)</label>
+                <input id="bottom_extra" type="range" min="-40" max="120" value="{{ defaults.bottom_extra }}">
+                <input id="bottom_extra_num" type="number" min="-40" max="120" value="{{ defaults.bottom_extra }}">
+            </div>
+
+            <div class="control-row">
+                <label for="left_extra">Left extra (px)</label>
+                <input id="left_extra" type="range" min="-40" max="120" value="{{ defaults.left_extra }}">
+                <input id="left_extra_num" type="number" min="-40" max="120" value="{{ defaults.left_extra }}">
+            </div>
+
+            <div class="control-row">
+                <label for="right_extra">Right extra (px)</label>
+                <input id="right_extra" type="range" min="-40" max="120" value="{{ defaults.right_extra }}">
+                <input id="right_extra_num" type="number" min="-40" max="120" value="{{ defaults.right_extra }}">
+            </div>
+
+            <div class="toolbar">
+                <div class="stats">
+                    Seg-issue samples: <strong>{{ issue_n }}</strong> · clean samples: <strong>{{ clean_n }}</strong> · total shown: <strong>{{ samples|length }}</strong>
+                </div>
+                <div>
+                    <a href="/annotate/segment-tuning?issue_n={{ issue_n }}&clean_n={{ clean_n }}">↻ Resample</a>
+                    &nbsp;|&nbsp;
+                    <a href="/annotate">Back to annotation</a>
+                </div>
+            </div>
+
+            <div class="save-row">
+                <label for="segmenter">Segmenter</label>
+                <input id="segmenter" type="text" value="cv_projection" placeholder="e.g. cv_projection_v2">
+                <input id="save_notes" type="text" placeholder="optional note (e.g. for OCR comparison run)">
+                <button id="save_config_btn" type="button">Save Config Snapshot</button>
+            </div>
+            <div id="save_status" class="save-status"></div>
+        </div>
+
+        {% if samples %}
+            <div class="list">
+                {% for s in samples %}
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <span class="tag {{ s.bucket }}">{{ s.bucket }}</span>
+                                <span style="margin-left: 8px;">Line #{{ s.line_id }}</span>
+                            </div>
+                            <div class="flags" title="{{ s.flag }}">{{ s.flag or 'no flags' }}</div>
+                        </div>
+                        <div class="preview-grid">
+                            <div class="preview-group">
+                                <div class="preview-title">Current crop</div>
+                                <div class="img-wrap">
+                                    <img src="/working/line_crops/{{ s.crop_path }}" alt="Current line crop">
+                                </div>
+                                <div class="preview-title">Current crop 2×</div>
+                                <div class="img-wrap magnified">
+                                    <img src="/working/line_crops/{{ s.crop_path }}" alt="Current line crop 2x">
+                                </div>
+                            </div>
+                            <div class="preview-group">
+                                <div class="preview-title">Tuned crop</div>
+                                <div class="img-wrap">
+                                    <img
+                                        class="tuned-image"
+                                        data-line-id="{{ s.line_id }}"
+                                        src="/annotate/segment-tuning/api/crop/{{ s.line_id }}?top_extra={{ defaults.top_extra }}&bottom_extra={{ defaults.bottom_extra }}&left_extra={{ defaults.left_extra }}&right_extra={{ defaults.right_extra }}"
+                                        alt="Tuned line crop"
+                                    >
+                                </div>
+                                <div class="preview-title">Tuned crop 2×</div>
+                                <div class="img-wrap magnified">
+                                    <img
+                                        class="tuned-image"
+                                        data-line-id="{{ s.line_id }}"
+                                        src="/annotate/segment-tuning/api/crop/{{ s.line_id }}?top_extra={{ defaults.top_extra }}&bottom_extra={{ defaults.bottom_extra }}&left_extra={{ defaults.left_extra }}&right_extra={{ defaults.right_extra }}"
+                                        alt="Tuned line crop 2x"
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty">No samples found. Add more human-reviewed lines, especially flagged segmentation issues.</div>
+        {% endif %}
+    </div>
+
+    <script>
+        const fields = ['top_extra', 'bottom_extra', 'left_extra', 'right_extra'];
+        const tunedImages = Array.from(document.querySelectorAll('.tuned-image'));
+        const saveBtn = document.getElementById('save_config_btn');
+        const saveStatus = document.getElementById('save_status');
+        const segmenterInput = document.getElementById('segmenter');
+        const notesInput = document.getElementById('save_notes');
+        const issueN = {{ issue_n }};
+        const cleanN = {{ clean_n }};
+        const sampleLineIds = [{% for s in samples %}{{ s.line_id }}{% if not loop.last %}, {% endif %}{% endfor %}];
+
+        function clamp(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+        }
+
+        function getMargins() {
+            const out = {};
+            for (const key of fields) {
+                const val = parseInt(document.getElementById(key).value, 10);
+                out[key] = Number.isFinite(val) ? val : 0;
+            }
+            return out;
+        }
+
+        function refreshTunedImages() {
+            const m = getMargins();
+            const qs = `top_extra=${m.top_extra}&bottom_extra=${m.bottom_extra}&left_extra=${m.left_extra}&right_extra=${m.right_extra}`;
+            tunedImages.forEach((img) => {
+                const lineId = img.dataset.lineId;
+                img.src = `/annotate/segment-tuning/api/crop/${lineId}?${qs}`;
+            });
+        }
+
+        function linkSliderAndNumber(key) {
+            const slider = document.getElementById(key);
+            const input = document.getElementById(`${key}_num`);
+            const min = parseInt(slider.min, 10);
+            const max = parseInt(slider.max, 10);
+
+            slider.addEventListener('input', () => {
+                input.value = slider.value;
+                scheduleRefresh();
+            });
+
+            input.addEventListener('input', () => {
+                const v = clamp(parseInt(input.value || '0', 10), min, max);
+                slider.value = v;
+                input.value = v;
+                scheduleRefresh();
+            });
+        }
+
+        let refreshTimer = null;
+        function scheduleRefresh() {
+            if (refreshTimer) {
+                clearTimeout(refreshTimer);
+            }
+            refreshTimer = setTimeout(refreshTunedImages, 120);
+        }
+
+        fields.forEach(linkSliderAndNumber);
+
+        async function saveCurrentConfig() {
+            const margins = getMargins();
+            const segmenter = (segmenterInput.value || '').trim() || 'cv_projection';
+            const notes = (notesInput.value || '').trim();
+
+            saveStatus.className = 'save-status';
+            saveStatus.textContent = 'Saving config...';
+
+            try {
+                const response = await fetch('/annotate/segment-tuning/api/save-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        segmenter,
+                        params: margins,
+                        issue_n: issueN,
+                        clean_n: cleanN,
+                        sample_line_ids: sampleLineIds,
+                        notes,
+                    }),
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Save failed');
+                }
+
+                saveStatus.className = 'save-status success';
+                saveStatus.textContent = `Saved config #${data.config_id} at ${data.created_at}`;
+            } catch (err) {
+                saveStatus.className = 'save-status error';
+                saveStatus.textContent = `Save failed: ${err.message}`;
+            }
+        }
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', saveCurrentConfig);
+        }
+    </script>
+</body>
+</html>
