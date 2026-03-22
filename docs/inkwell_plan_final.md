@@ -19,21 +19,23 @@ Primary success metric: lower CER/WER on fixed validation/test sets.
 
 - SQLite DB as source of truth (`working/inkwell.db`)
 - Web UI:
-  - `/annotate` (+ queue mode from suggestions files)
+  - `/annotate` (+ queue mode from suggestions files; shows latest OCR predictions with DB fallback)
   - `/annotate/review`, `/annotate/edit/<line_id>`
-  - `/jobs` (automation, code sync, eval submit, pool inference launcher)
+  - `/jobs` (automation, code sync, eval submit, pool inference, suggestions generation)
+  - `/jobs/results` (cleaner view of experiment + eval trails by dataset)
 - GPU worker queue over shared folder:
   - `finetune`, `eval`, `infer_pool`
 - Dataset/export tooling:
-  - GT export for train/val/test
+  - GT export for train/val/test with configurable text-marker policy
   - unlabeled full-pool export (`unlabeled_pool/`)
+  - policy persistence in dataset manifest
 - Full-pool inference:
   - fine-tuned checkpoint runs over ~15k unlabeled lines
   - results stored in job artifact file (`pool_predictions.jsonl`)
 - Annotation suggestion generation:
-  - `scripts/pick_next_samples.py`
-  - consumes eval + pool predictions
-  - outputs `working/suggestions/next_samples_*.jsonl`
+  - one-click button on `/jobs` or manual `scripts/pick_next_samples.py`
+  - consumes eval + pool predictions + hard-char analysis
+  - outputs `working/suggestions/next_samples_*.jsonl` (instantly loadable in Annotate)
 
 ## 3) Non-negotiables
 
@@ -47,12 +49,13 @@ Primary success metric: lower CER/WER on fixed validation/test sets.
 
 Use this loop continuously:
 
-1. Annotate from latest suggestions queue (`/annotate` queue mode).
-2. Export + train (`run_automation.py` or `/jobs` automation button).
-3. Run baseline/fine-tuned eval (`/jobs` eval controls).
-4. Run full unlabeled inference (`/jobs` pool button).
-5. Generate next suggestions (`pick_next_samples.py`).
-6. Repeat.
+1. Annotate from latest suggestions queue (`/annotate` queue mode; OCR shows latest model predictions).
+2. Export + train (`run_automation.py` or `/jobs` automation button); policy auto-applied.
+3. Run baseline/fine-tuned eval (`/jobs` eval controls; split-aware val/test submission).
+4. Monitor results (`/jobs/results` for clear experiment trails).
+5. Run full unlabeled inference (`/jobs` pool button).
+6. Generate next suggestions (`/jobs` → Generate next samples button, or manual script).
+7. Repeat.
 
 ## 5) Parallel work policy
 
@@ -67,7 +70,14 @@ Avoid broad UI expansion until loop quality is stable.
 
 ## 6) Active technical decisions
 
-### 6.1 Crop quality
+### 6.1 Configurable text-marker policy
+
+- Marker handling (e.g. `-` prefixes, trailing metadata) is now configurable per profile.
+- Policy applies automatically on export via `inkwell/text_policy.py`.
+- Policy is persisted in dataset manifest for reproducibility.
+- Keeps readable-text training clean while preserving full raw OCR in DB.
+
+### 6.2 Crop quality
 
 - Bottom margin is currently acceptable.
 - Top margin should be slightly larger to reduce accent clipping.
@@ -75,7 +85,7 @@ Avoid broad UI expansion until loop quality is stable.
   - recrop existing lines in place (prefer unannotated-only by default),
   - keep segmentation IDs/line IDs unchanged.
 
-### 6.2 Full-pool inference storage
+### 6.3 Full-pool inference storage
 
 Store in job artifacts only:
 
@@ -84,7 +94,7 @@ Store in job artifacts only:
 
 Do not insert all predictions into DB.
 
-### 6.3 Suggestions quality
+### 6.4 Suggestions quality
 
 Current ranking blends:
 

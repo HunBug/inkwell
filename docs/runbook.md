@@ -48,17 +48,34 @@ python scripts/submit_job.py infer_pool --dataset-id "$DATASET_ID" --checkpoint 
 
 ## 5) Generate annotation suggestions
 
+### Quickest (web UI):
+
+- `/jobs` → input sample count (default 150) → **Generate next samples** button
+- Suggestions file appears immediately in Annotate dropdown
+
+### Manual equivalent:
+
 ```bash
-python scripts/pick_next_samples.py --n 150
+python scripts/pick_next_samples.py --n 150 --shared /path/to/shared
 ```
 
-Output:
+Output: `working/suggestions/next_samples_*.jsonl` (auto-loaded in Annotate)
 
-- `working/suggestions/next_samples_*.jsonl`
+## 6) Apply text-marker policy on export
 
-Load in `/annotate` queue mode.
+Configured in `automation.toml` under `[readable_text.policies]`.
+Automatically applied by `run_automation.py` during export.
 
-## 6) Safe crop-margin adjustment (no ID remap)
+Example:
+```toml
+[readable_text.policies.readable_text_v1]
+drop_lines = { has_leading_marker = true, marker = '-' }
+transform = { remove_trailing_symbols = true }
+```
+
+Policy results are tracked in dataset manifest.json.
+
+## 7) Safe crop-margin adjustment (no ID remap)
 
 Increase top margin on existing crops while preserving line IDs.
 
@@ -72,7 +89,7 @@ Dry run first:
 python scripts/recrop_lines.py --top-extra 8 --bottom-extra 0 --dry-run
 ```
 
-## 7) Where key artifacts live
+## 8) Where key artifacts live
 
 - Shared queue/jobs: `.../inkwell-automation/jobs/`
 - Shared datasets: `.../inkwell-automation/datasets/`

@@ -8,9 +8,11 @@ Improve OCR quality through iterative human-in-the-loop training on handwritten 
 
 - End-to-end pipeline (ingest → preprocess → segment → OCR → annotate → train/eval)
 - GPU job queue and worker over shared folder
-- `/jobs` controls for automation, sync, eval, and full-pool inference
-- `/annotate` queue mode from suggestions files
+- `/jobs` controls for automation, sync, eval, full-pool inference, and suggestions generation (one-click)
+- `/jobs/results` for clean experiment + eval overview
+- `/annotate` queue mode from suggestions files; OCR preview from latest model predictions
 - Full unlabeled pool export/inference path (`infer_pool`)
+- Configurable text-marker policy for readable training data export
 
 ## Core loop
 
@@ -27,14 +29,15 @@ Improve OCR quality through iterative human-in-the-loop training on handwritten 
 - Full-pool predictions remain file-based (no large DB ingestion).
 - Preserve existing line IDs and immutable human labels.
 
-## Active quality issue
+## Quality notes
 
-Line crops sometimes clip top accents; slight top-context increase is preferred over tight clipping.
+**Line crops:** sometimes clip top accents; slight top-context increase preferred over tight clipping.
+- Safe recrop tool: `scripts/recrop_lines.py`
+- Segmentation default adjusted to larger top margin for new runs
 
-Current mitigation:
-
-- safe recrop tool: `scripts/recrop_lines.py`
-- segmentation default adjusted to larger top margin for new segmentation runs
+**Text rendering:** Configurable marker policy (e.g., `-` prefixes) keeps training data readable.
+- Controlled via `automation.toml` policies
+- Auto-applied on export; results tracked in manifest
 
 ## Key scripts to know
 
@@ -45,11 +48,19 @@ Current mitigation:
 - `scripts/pick_next_samples.py`
 - `scripts/recrop_lines.py`
 
+## Latest status (end of session)
+
+- Round 3 complete with verified fine-tuned checkpoint and full-pool inference
+- Fresh suggestions file generated and confirmed loadable
+- One-click "Generate next samples" button added to `/jobs` page
+- Marker policy system integrated and tested in export pipeline
+- Results page deployed for clearer eval/experiment tracking
+
 ## Next high-value tasks
 
-1. Improve suggestion quality (reduce noisy/symbol-heavy picks).
-2. Add mixed sampling buckets (hard + medium + cleaner lines).
-3. Benchmark margin variants quickly on fixed sample and choose stable defaults.
+1. Continue annotation on latest suggestions (queue-mode in `/annotate`).
+2. Monitor fine-tune/eval stability over successive rounds.
+3. Benchmark crop margin variants on next round cycle.
 
 ## Read these docs first
 
