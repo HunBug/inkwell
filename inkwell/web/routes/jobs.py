@@ -480,6 +480,54 @@ def _start_pool_launcher(shared: Path) -> bool:
     return True
 
 
+def _run_pick_suggestions(shared: Path, n: int = 150) -> tuple[bool, str]:
+    from inkwell.db import PROJECT_ROOT
+
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "pick_next_samples.py"),
+        "--n",
+        str(n),
+        "--shared",
+        str(shared),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as e:
+        return False, f"Failed to start picker: {e}"
+
+    output_parts = (proc.stdout or "", proc.stderr or "")
+    combined_out = "\n".join(
+        part.strip()
+        for part in output_parts
+        if part and part.strip()
+    )
+
+    if proc.returncode != 0:
+        if combined_out:
+            tail = "\n".join(combined_out.splitlines()[-4:])
+        else:
+            tail = "unknown error"
+        return False, f"Suggestion picker failed ({proc.returncode}): {tail}"
+
+    written_path = None
+    for line in combined_out.splitlines():
+        marker = "[pick] Written:"
+        if marker in line:
+            written_path = line.split(marker, 1)[1].strip()
+            break
+
+    if written_path:
+        return True, f"Suggestions generated: {Path(written_path).name}"
+    return True, "Suggestions generated successfully."
+
+
 BASELINE_MODEL = "microsoft/trocr-base-handwritten"
 
 
@@ -737,6 +785,8 @@ def _age(iso_str: str) -> str:
 
 @jobs_bp.route("/")
 def index():
+    from flask import request
+
     shared = _get_shared_path()
     jobs = _load_jobs()
     jobs_active = any(j["status"] in ("pending", "running") for j in jobs)
@@ -755,6 +805,8 @@ def index():
     pending_count = sum(1 for j in jobs if j["status"] == "pending")
     running_count = sum(1 for j in jobs if j["status"] == "running")
     datasets = _load_datasets_with_eval_status(shared, jobs)
+    control_msg = request.args.get("control_msg")
+    control_level = request.args.get("control_level", "ok")
     return render_template(
         "jobs.html",
         jobs=jobs,
@@ -769,6 +821,8 @@ def index():
         pending_count=pending_count,
         running_count=running_count,
         baseline_model=BASELINE_MODEL,
+        control_msg=control_msg,
+        control_level=control_level,
         age=_age,
     )
 
@@ -823,6 +877,25 @@ def run_pool():
     shared = _get_shared_path()
     _start_pool_launcher(shared)
     return redirect(url_for("jobs.index"))
+
+
+@jobs_bp.route("/suggestions/run", methods=["POST"])
+def run_suggestions():
+    from flask import request, redirect, url_for
+
+    shared = _get_shared_path()
+    raw_n = request.form.get("n", "150")
+    try:
+        n = int(raw_n)
+    except Exception:
+        n = 150
+    n = max(1, min(n, 1000))
+
+    ok, msg = _run_pick_suggestions(shared, n=n)
+    level = "ok" if ok else "error"
+    return redirect(
+        url_for("jobs.index", control_msg=msg, control_level=level)
+    )
 
 
 @jobs_bp.route("/eval/submit", methods=["POST"])

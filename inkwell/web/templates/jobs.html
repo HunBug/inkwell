@@ -105,6 +105,27 @@
     background: #8e44ad;
 }
 .pool-btn:hover { background: #7d3c98; }
+.suggest-btn {
+    background: #d35400;
+}
+.suggest-btn:hover { background: #ba4a00; }
+.control-alert {
+    margin-bottom: 0.8rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    border: 1px solid;
+}
+.control-alert.ok {
+    background: #d4edda;
+    border-color: #c3e6cb;
+    color: #155724;
+}
+.control-alert.error {
+    background: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
 
 /* Datasets panel */
 .datasets-panel {
@@ -319,6 +340,10 @@
 </div>
 
 <div class="control-panel">
+    {% if control_msg %}
+    <div class="control-alert {{ control_level }}">{{ control_msg }}</div>
+    {% endif %}
+
     <div class="control-title">
         <strong>Training Control Panel</strong>
         <span class="launcher-pill {{ launcher.status }}">launcher: {{ launcher.status }}</span>
@@ -358,6 +383,21 @@
         {% if pool.updated_at %}
         <span class="launch-note">updated {{ age(pool.updated_at) }}</span>
         {% endif %}
+    </div>
+
+    <div style="margin-bottom: 0.75rem;">
+        <form action="/jobs/suggestions/run" method="post" style="display:inline;">
+            <input
+                type="number"
+                name="n"
+                value="150"
+                min="1"
+                max="1000"
+                style="width: 6rem; margin-right: 0.4rem; padding: 0.35rem 0.45rem;"
+            >
+            <button class="suggest-btn">Generate next samples</button>
+        </form>
+        <span class="launch-note">Writes a new next_samples file into local working/suggestions for the Annotate page.</span>
     </div>
 
     {% if sync.log_tail %}
