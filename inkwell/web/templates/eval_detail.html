@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Eval Detail — {{ job.job_id }} — Inkwell{% endblock %}
+
+{% block extra_css %}
+<style>
+.detail-header {
+  margin-bottom: 1.2rem;
+}
+.detail-header h2 {
+  font-size: 1.3rem;
+  margin-bottom: 0.3rem;
+}
+.meta {
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.5rem;
+}
+.meta strong { color: #333; }
+.metrics-row {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem 1.2rem;
+}
+.metric { font-size: 0.95rem; }
+.metric .val { font-size: 1.3rem; font-weight: 700; }
+.metric .val.good { color: #1e7e34; }
+.metric .val.bad { color: #b71c1c; }
+.metric .label { font-size: 0.78rem; color: #666; }
+
+.filter-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+  flex-wrap: wrap;
+}
+.filter-bar label { font-size: 0.85rem; }
+.filter-bar input[type=range] { width: 160px; }
+.filter-bar span { font-size: 0.85rem; font-family: monospace; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  background: white;
+}
+th, td {
+  border: 1px solid #e0e0e0;
+  padding: 0.4rem 0.6rem;
+  vertical-align: middle;
+}
+th {
+  background: #f5f5f5;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.col-cer { width: 70px; text-align: center; font-family: monospace; font-weight: 700; }
+.col-img { width: 220px; text-align: center; }
+.col-ref, .col-pred { }
+.cer-bar-cell { width: 120px; }
+.cer-bar-wrap { background: #eee; border-radius: 3px; height: 10px; }
+.cer-bar-fill { height: 10px; border-radius: 3px; background: #e74c3c; }
+.crop-img {
+  max-width: 210px;
+  max-height: 60px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  display: block;
+  margin: auto;
+}
+.ref-text { color: #1a5276; }
+.pred-text { color: #333; }
+.diff-char-wrong { background: #ffd6d6; border-radius: 2px; }
+tr.hidden-row { display: none; }
+.back-link { font-size: 0.85rem; margin-bottom: 1rem; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="back-link" href="{{ url_for('jobs.results') }}">← Back to Results</a>
+
+<div class="detail-header">
+  <h2>Eval Detail: {{ job.job_id }}</h2>
+  <div class="meta">
+    <strong>Dataset:</strong> {{ dataset_id }} &nbsp;|&nbsp;
+    <strong>Split:</strong> {{ result.get('split', job.get('split', '?')) }} &nbsp;|&nbsp;
+    <strong>Finished:</strong> {{ age(result.get('finished_at', '')) }}
+  </div>
+  {% if finetune_job %}
+  <div class="meta">
+    <strong>Trained from:</strong>
+    <code>{{ finetune_job.get('base_model', '—') }}</code>
+    &nbsp;|&nbsp;
+    <strong>Label:</strong> {{ finetune_job.get('label', '—') }}
+    &nbsp;|&nbsp;
+    <strong>Finetune job:</strong> {{ finetune_job.get('job_id', '—') }}
+  </div>
+  {% else %}
+  <div class="meta">
+    <strong>Checkpoint:</strong> <code>{{ job.get('eval_checkpoint') or result.get('checkpoint', '—') }}</code>
+  </div>
+  {% endif %}
+</div>
+
+<div class="metrics-row">
+  <div class="metric">
+    <div class="val {% if result.cer is not none %}{% if result.cer < 0.4 %}good{% else %}bad{% endif %}{% endif %}">
+      {{ '%.4f'|format(result.cer) if result.cer is not none else '—' }}
+    </div>
+    <div class="label">Overall CER</div>
+  </div>
+  <div class="metric">
+    <div class="val">{{ '%.4f'|format(result.wer) if result.wer is not none else '—' }}</div>
+    <div class="label">Overall WER</div>
+  </div>
+  <div class="metric">
+    <div class="val">{{ result.n_lines or per_line|length }}</div>
+    <div class="label">Lines evaluated</div>
+  </div>
+  {% if result.get('generation') %}
+  <div class="metric">
+    <div class="val" style="font-size:0.95rem; font-family:monospace;">
+      beams={{ result.generation.get('num_beams', '?') }}&nbsp;
+      max={{ result.generation.get('max_new_tokens', '?') }}
+    </div>
+    <div class="label">Generation params</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if per_line %}
+<div class="filter-bar">
+  <label for="cer-threshold">Show CER ≥ <span id="cer-val">0.00</span></label>
+  <input type="range" id="cer-threshold" min="0" max="100" value="0" step="1">
+  <span id="visible-count">{{ per_line|length }} / {{ per_line|length }} lines</span>
+</div>
+
+<table id="detail-table">
+  <thead>
+    <tr>
+      <th>line_id</th>
+      <th class="col-cer">CER</th>
+      <th class="cer-bar-cell"></th>
+      <th class="col-img">Crop</th>
+      <th class="col-ref">Reference (ground truth)</th>
+      <th class="col-pred">Prediction (OCR)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in per_line %}
+    <tr data-cer="{{ item.cer }}">
+      <td style="font-family:monospace; font-size:0.8rem;">{{ item.line_id }}</td>
+      <td class="col-cer" style="color: {% if item.cer > 0.7 %}#b71c1c{% elif item.cer > 0.4 %}#e67e22{% else %}#1e7e34{% endif %};">
+        {{ '%.3f'|format(item.cer) }}
+      </td>
+      <td class="cer-bar-cell">
+        <div class="cer-bar-wrap">
+          <div class="cer-bar-fill" style="width: {{ [item.cer * 100, 100]|min|int }}%;"></div>
+        </div>
+      </td>
+      <td class="col-img">
+        {% if item.image and dataset_id %}
+        <img class="crop-img"
+             src="{{ url_for('jobs.serve_dataset_image', dataset_id=dataset_id, image_path=item.image) }}"
+             alt="line {{ item.line_id }}"
+             loading="lazy">
+        {% else %}
+        <span style="color:#999; font-size:0.8rem;">no image</span>
+        {% endif %}
+      </td>
+      <td class="col-ref"><span class="ref-text">{{ item.reference }}</span></td>
+      <td class="col-pred"><span class="pred-text">{{ item.prediction }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#999;">No per-line data available.</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const slider = document.getElementById('cer-threshold');
+  const cerValSpan = document.getElementById('cer-val');
+  const countSpan = document.getElementById('visible-count');
+  if (!slider) return;
+  const rows = Array.from(document.querySelectorAll('#detail-table tbody tr'));
+  const total = rows.length;
+
+  slider.addEventListener('input', function () {
+    const threshold = this.value / 100;
+    cerValSpan.textContent = threshold.toFixed(2);
+    let visible = 0;
+    rows.forEach(function (row) {
+      const cer = parseFloat(row.dataset.cer);
+      if (cer >= threshold) {
+        row.style.display = '';
+        visible++;
+      } else {
+        row.style.display = 'none';
+      }
+    });
+    countSpan.textContent = visible + ' / ' + total + ' lines';
+  });
+})();
+</script>
+{% endblock %}

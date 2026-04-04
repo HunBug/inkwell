@@ -160,6 +160,12 @@ def compute_cer(predictions: list[str], references: list[str]) -> float:
     return total_dist / total_len if total_len > 0 else 0.0
 
 
+def _generation_kwargs(max_new_tokens: int) -> dict:
+    return {
+        "max_new_tokens": max(8, int(max_new_tokens)),
+    }
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -281,6 +287,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation", type=int, default=1)
     parser.add_argument("--lr", type=float, default=5e-5)
+    parser.add_argument("--max-new-tokens", type=int, default=128)
     args = parser.parse_args()
 
     dataset_dir = Path(args.dataset)
@@ -315,6 +322,10 @@ def main() -> None:
     model.config.pad_token_id = processor.tokenizer.pad_token_id
     model.config.vocab_size = model.config.decoder.vocab_size
     model.config.use_cache = False
+    # Persist safer OCR decode defaults in checkpoints for downstream scripts.
+    model.generation_config.max_new_tokens = max(8, int(args.max_new_tokens))
+    model.generation_config.num_beams = 1
+    model.generation_config.early_stopping = False
 
     try:
         model.gradient_checkpointing_enable()
@@ -427,6 +438,10 @@ def main() -> None:
 
     # Save final model to checkpoints/best (quick mode: no intermediate checkpoints)
     best_dir = checkpoints_dir / "best"
+    # Re-assert before save: newer transformers validates generation_config at save time,
+    # and a trainer pass may have mutated it (e.g. early_stopping=True from base model config).
+    model.generation_config.num_beams = 1
+    model.generation_config.early_stopping = False
     trainer.save_model(str(best_dir))
     processor.save_pretrained(str(best_dir))
     print(f"Final model saved to {best_dir}", flush=True)
@@ -435,12 +450,13 @@ def main() -> None:
     write_progress(status="running", message="Final evaluation...")
     val_predictions = []
     val_references = []
+    generation_kwargs = _generation_kwargs(args.max_new_tokens)
     device = next(model.parameters()).device
     model.eval()
     with torch.no_grad():
         for item_dict in val_ds:
             pixel_values = item_dict["pixel_values"].unsqueeze(0).to(device)
-            generated_ids = model.generate(pixel_values)
+            generated_ids = model.generate(pixel_values, **generation_kwargs)
             pred = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
             # Recover reference text from dataset
             val_predictions.append(pred)
@@ -469,6 +485,10 @@ def main() -> None:
         "best_checkpoint": str(best_dir),
         "train_samples": len(train_ds),
         "val_samples": len(val_ds),
+        "generation": {
+            "max_new_tokens": generation_kwargs["max_new_tokens"],
+            "num_beams": 1,
+        },
     }
     (job_dir / "result.json").write_text(json.dumps(result, indent=2))
     write_progress(

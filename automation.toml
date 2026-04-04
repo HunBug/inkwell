@@ -30,7 +30,7 @@ require_no_active_jobs = true
 
 [dataset]
 # Reused by default. Change this when you want a new frozen export.
-dataset_id = "gt_20260317_round3"
+dataset_id = "gt_20260401_round6_2_codefix5"
 # If false and the dataset folder already exists, it is reused as-is.
 force_reexport = false
 # If true, the launcher will rsync the chosen dataset to gpu.remote_dataset_cache_root
@@ -77,8 +77,16 @@ test = "drop_line"
 
 [job]
 type = "finetune"  # or "eval"
-label = "round2_full_retrain"
-base_model = "microsoft/trocr-base-handwritten"
+label = "round3_MODEL_SELECT_base_stage1"  # for bookkeeping, e.g. in WandB. No spaces, ideally short but descriptive.
+# Base model options (pick one):
+# microsoft/trocr-base-handwritten      -- current, English handwriting, fast
+# microsoft/trocr-large-handwritten     -- larger capacity, same domain, worth trying first
+# microsoft/trocr-base-stage1           -- generic pretrain, no domain bias, good for non-English
+# microsoft/trocr-large-stage1          -- large generic, most capacity, slow
+# microsoft/trocr-base-printed          -- printed text only, likely worse for handwriting
+# base_model = "microsoft/trocr-base-handwritten"
+# base_model = "microsoft/trocr-large-handwritten"
+base_model = "microsoft/trocr-base-stage1"
 resume_from = ""
 eval_checkpoint = ""
 epochs = 30

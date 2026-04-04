@@ -157,11 +157,21 @@ def write_progress(job_dir: Path | None, **kwargs) -> None:
     p.write_text(json.dumps(existing, indent=2))
 
 
+def _generation_kwargs(max_new_tokens: int, num_beams: int) -> dict:
+    return {
+        "max_new_tokens": max(8, int(max_new_tokens)),
+        "num_beams": max(1, int(num_beams)),
+        "early_stopping": True,
+    }
+
+
 def _run_eval(
     checkpoint: str,
     dataset_dir: Path,
     split: str,
     batch_size: int,
+    max_new_tokens: int,
+    num_beams: int,
     job_dir: Path | None,
     output_dir: Path | None,
     db_path: Path | None,
@@ -192,6 +202,7 @@ def _run_eval(
     predictions: list[str] = []
     references: list[str] = [item["text"] for item in items]
     per_line: list[dict] = []
+    generation_kwargs = _generation_kwargs(max_new_tokens=max_new_tokens, num_beams=num_beams)
 
     batch_pixel_values = []
     batch_items = []
@@ -201,7 +212,7 @@ def _run_eval(
             return
         tensor = torch.stack(batch_pixel_values).to(device)
         with torch.no_grad():
-            generated_ids = model.generate(tensor)
+            generated_ids = model.generate(tensor, **generation_kwargs)
         texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
         for item, pred in zip(batch_items, texts):
             pred = pred.strip()
@@ -249,6 +260,7 @@ def _run_eval(
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "checkpoint": checkpoint,
         "split": split,
+        "generation": generation_kwargs,
         "n_lines": len(items),
         "cer": cer,
         "wer": wer,
@@ -317,6 +329,8 @@ def main() -> None:
     parser.add_argument("--job-dir", default=None, help="Job directory for progress/result files (GPU worker mode)")
     parser.add_argument("--split", default="val", choices=["train", "val", "test"])
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument("--num-beams", type=int, default=1)
     # Standalone extras
     parser.add_argument(
         "--compare-job",
@@ -350,6 +364,8 @@ def main() -> None:
         dataset_dir=dataset_dir,
         split=args.split,
         batch_size=args.batch_size,
+        max_new_tokens=args.max_new_tokens,
+        num_beams=args.num_beams,
         job_dir=job_dir,
         output_dir=output_dir,
         db_path=db_path,

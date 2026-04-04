@@ -117,9 +117,9 @@ th { background: #fafafa; }
           <tr>
             <td>{{ split }}</td>
             {% if ev and ev.result %}
-              <td>{{ '%.4f'|format(ev.result.get('cer')) if ev.result.get('cer') is not none else '-' }}</td>
+              <td><a href="{{ url_for('jobs.eval_detail', job_id=ev.job_id) }}">{{ '%.4f'|format(ev.result.get('cer')) if ev.result.get('cer') is not none else '-' }}</a></td>
               <td>{{ '%.4f'|format(ev.result.get('wer')) if ev.result.get('wer') is not none else '-' }}</td>
-              <td>{{ ev.job_id }}</td>
+              <td><a href="{{ url_for('jobs.eval_detail', job_id=ev.job_id) }}">{{ ev.job_id }}</a></td>
               <td>{{ age(ev.created_at) }}</td>
             {% else %}
               <td class="muted">no eval</td>
@@ -138,24 +138,28 @@ th { background: #fafafa; }
         <tr>
           <th>Job</th>
           <th>Age</th>
-          <th>Train Val CER</th>
+          <th>Base model</th>
+          <th>Label</th>
+          <th>Train CER</th>
           <th>Eval Val CER</th>
           <th>Eval Test CER</th>
         </tr>
       </thead>
       <tbody>
         {% if not ds.finetunes %}
-          <tr><td colspan="5" class="muted">No completed finetune runs for this dataset.</td></tr>
+          <tr><td colspan="7" class="muted">No completed finetune runs for this dataset.</td></tr>
         {% endif %}
         {% for ft in ds.finetunes %}
           <tr>
-            <td>{{ ft.job_id }}</td>
+            <td style="font-family:monospace; font-size:0.78rem;">{{ ft.job_id }}</td>
             <td>{{ age(ft.created_at) }}</td>
+            <td style="font-family:monospace; font-size:0.78rem;">{{ ft.base_model.split('/')[-1] if ft.base_model else '-' }}</td>
+            <td style="font-size:0.82rem; color:#555;">{{ ft.label or '-' }}</td>
             <td>{{ '%.4f'|format(ft.train_val_cer) if ft.train_val_cer is not none else '-' }}</td>
             <td>
               {% set evv = ft.eval.get('val') %}
               {% if evv and evv.result and evv.result.get('cer') is not none %}
-                {{ '%.4f'|format(evv.result.get('cer')) }}
+                <a href="{{ url_for('jobs.eval_detail', job_id=evv.job_id) }}">{{ '%.4f'|format(evv.result.get('cer')) }}</a>
               {% else %}
                 <span class="muted">no eval</span>
               {% endif %}
@@ -163,7 +167,7 @@ th { background: #fafafa; }
             <td>
               {% set evt = ft.eval.get('test') %}
               {% if evt and evt.result and evt.result.get('cer') is not none %}
-                {{ '%.4f'|format(evt.result.get('cer')) }}
+                <a href="{{ url_for('jobs.eval_detail', job_id=evt.job_id) }}">{{ '%.4f'|format(evt.result.get('cer')) }}</a>
               {% else %}
                 <span class="muted">no eval</span>
               {% endif %}

@@ -188,7 +188,7 @@ def count_current_gt() -> int:
     conn = get_connection(str(DEFAULT_DB_PATH))
     row = conn.execute(
         """
-        SELECT COUNT(*) AS cnt
+                SELECT COUNT(DISTINCT t.line_id) AS cnt
         FROM transcriptions t
         WHERE t.transcription_type = 'HUMAN_CORRECTED'
           AND t.immutable = 1

@@ -64,18 +64,24 @@ def get_gt_lines(conn) -> list[dict]:
     Marker handling is applied later via inkwell.text_policy.
     """
     rows = conn.execute("""
+                WITH latest_human AS (
+                        SELECT line_id, MAX(id) AS latest_id
+                        FROM transcriptions
+                        WHERE transcription_type = 'HUMAN_CORRECTED'
+                            AND immutable = 1
+                        GROUP BY line_id
+                )
         SELECT
             t.line_id,
             t.text,
             l.crop_image_path,
             l.page_id,
             ds.split
-        FROM transcriptions t
+                FROM latest_human lh
+                JOIN transcriptions t ON t.id = lh.latest_id
         JOIN lines l ON l.id = t.line_id
         JOIN dataset_splits ds ON ds.page_id = l.page_id
-        WHERE t.transcription_type = 'HUMAN_CORRECTED'
-          AND t.immutable = 1
-          AND (t.flag IS NULL OR t.flag NOT IN ('UNUSABLE_SEGMENTATION', 'NOT_TEXT'))
+                WHERE (t.flag IS NULL OR t.flag NOT IN ('UNUSABLE_SEGMENTATION', 'NOT_TEXT'))
           AND l.skip = 0
           AND l.crop_image_path IS NOT NULL
         ORDER BY ds.split, t.line_id

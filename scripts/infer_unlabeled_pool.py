@@ -27,6 +27,14 @@ from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 
+def _generation_kwargs(max_new_tokens: int, num_beams: int) -> dict:
+    return {
+        "max_new_tokens": max(8, int(max_new_tokens)),
+        "num_beams": max(1, int(num_beams)),
+        "early_stopping": True,
+    }
+
+
 def write_progress(job_dir: Path | None, **kwargs) -> None:
     if job_dir is None:
         return
@@ -48,6 +56,8 @@ def main() -> None:
     p.add_argument("--checkpoint", required=True, help="Model checkpoint (local path or HF ID)")
     p.add_argument("--job-dir", default=None, help="Job directory for progress/result files")
     p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--max-new-tokens", type=int, default=128)
+    p.add_argument("--num-beams", type=int, default=1)
     args = p.parse_args()
 
     dataset_dir = Path(args.dataset)
@@ -68,6 +78,7 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     model.eval()
+    generation_kwargs = _generation_kwargs(args.max_new_tokens, args.num_beams)
 
     items = []
     with open(pool_jsonl, encoding="utf-8") as f:
@@ -98,7 +109,7 @@ def main() -> None:
 
             pixel_values = processor(images=images, return_tensors="pt").pixel_values.to(device)
             with torch.no_grad():
-                generated_ids = model.generate(pixel_values)
+                generated_ids = model.generate(pixel_values, **generation_kwargs)
             preds = processor.batch_decode(generated_ids, skip_special_tokens=True)
 
             for item, pred in zip(batch, preds):
@@ -123,6 +134,7 @@ def main() -> None:
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "dataset": str(dataset_dir),
         "checkpoint": args.checkpoint,
+        "generation": generation_kwargs,
         "n_lines": total,
         "predictions_path": str(out_path),
     }

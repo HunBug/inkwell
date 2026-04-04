@@ -724,6 +724,9 @@ def _build_results_summary(shared: Path, jobs: list[dict]) -> list[dict]:
 
             finetune_rows.append({
                 "job_id": ft_id,
+                "label": ft.get("label", ""),
+                "base_model": ft.get("base_model", ""),
+                "epochs": (ft.get("params") or {}).get("epochs") or (ft.get("result") or {}).get("epochs"),
                 "created_at": ft.get("created_at"),
                 "train_val_cer": (ft.get("result") or {}).get("final_val_cer"),
                 "train_loss": (ft.get("result") or {}).get("final_train_loss"),
@@ -895,6 +898,90 @@ def run_suggestions():
     level = "ok" if ok else "error"
     return redirect(
         url_for("jobs.index", control_msg=msg, control_level=level)
+    )
+
+
+@jobs_bp.route("/image/<dataset_id>/<path:image_path>")
+def serve_dataset_image(dataset_id: str, image_path: str):
+    """Serve a crop image from shared/datasets/<dataset_id>/<image_path>."""
+    from flask import abort
+    import re
+
+    # Guard: dataset_id must be a plain slug, image_path must not escape the dir
+    if not re.match(r'^[\w\-]+$', dataset_id):
+        abort(400)
+    shared = _get_shared_path()
+    crops_root = (shared / "datasets" / dataset_id).resolve()
+    target = (crops_root / image_path).resolve()
+    # Prevent path traversal
+    try:
+        target.relative_to(crops_root)
+    except ValueError:
+        abort(400)
+    if not target.exists():
+        abort(404)
+    from flask import send_file
+    return send_file(target)
+
+
+@jobs_bp.route("/<job_id>/eval-detail")
+def eval_detail(job_id: str):
+    from flask import abort
+    import re
+
+    if not re.match(r'^[\w\-]+$', job_id):
+        abort(400)
+
+    shared = _get_shared_path()
+    job_dir = shared / "jobs" / job_id
+
+    if not job_dir.exists():
+        abort(404)
+
+    try:
+        job = json.loads((job_dir / "job.json").read_text())
+    except Exception:
+        abort(404)
+
+    result: dict = {}
+    result_file = job_dir / "result.json"
+    if result_file.exists():
+        try:
+            result = json.loads(result_file.read_text())
+        except Exception:
+            pass
+
+    per_line: list[dict] = sorted(
+        result.get("per_line") or [],
+        key=lambda x: x.get("cer", 0),
+        reverse=True,
+    )
+
+    dataset_id = job.get("dataset_id", "")
+
+    # Try to resolve the finetune job that produced this checkpoint, to get
+    # base_model and label. Checkpoint path looks like: .../jobs/<ft_id>/checkpoints/best
+    finetune_job: dict = {}
+    checkpoint = job.get("eval_checkpoint") or result.get("checkpoint", "")
+    if checkpoint and "checkpoints" in checkpoint:
+        parts = Path(checkpoint).parts
+        try:
+            cp_idx = parts.index("checkpoints")
+            ft_job_id = parts[cp_idx - 1]
+            ft_job_file = shared / "jobs" / ft_job_id / "job.json"
+            if ft_job_file.exists():
+                finetune_job = json.loads(ft_job_file.read_text())
+        except Exception:
+            pass
+
+    return render_template(
+        "eval_detail.html",
+        job=job,
+        result=result,
+        per_line=per_line,
+        dataset_id=dataset_id,
+        finetune_job=finetune_job,
+        age=_age,
     )
 
 
