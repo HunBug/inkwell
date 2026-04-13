@@ -77,7 +77,7 @@ test = "drop_line"
 
 [job]
 type = "finetune"  # or "eval"
-label = "round3_MODEL_SELECT_base_stage1"  # for bookkeeping, e.g. in WandB. No spaces, ideally short but descriptive.
+label = "puli_pretrain_epoch3_finetune"  # for bookkeeping, e.g. in WandB. No spaces, ideally short but descriptive.
 # Base model options (pick one):
 # microsoft/trocr-base-handwritten      -- current, English handwriting, fast
 # microsoft/trocr-large-handwritten     -- larger capacity, same domain, worth trying first
@@ -86,7 +86,7 @@ label = "round3_MODEL_SELECT_base_stage1"  # for bookkeeping, e.g. in WandB. No 
 # microsoft/trocr-base-printed          -- printed text only, likely worse for handwriting
 # base_model = "microsoft/trocr-base-handwritten"
 # base_model = "microsoft/trocr-large-handwritten"
-base_model = "microsoft/trocr-base-stage1"
+base_model = "working/shared/pretrained_puli_v1/checkpoints/checkpoint-35613"
 resume_from = ""
 eval_checkpoint = ""
 epochs = 30

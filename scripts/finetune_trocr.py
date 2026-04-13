@@ -33,6 +33,8 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import (
+    AutoImageProcessor,
+    AutoTokenizer,
     TrOCRProcessor,
     VisionEncoderDecoderModel,
     Seq2SeqTrainer,
@@ -43,19 +45,32 @@ from transformers import (
 )
 
 
+def _load_image_processor_and_tokenizer(model_id: str) -> tuple:
+    """Load image processor + tokenizer for TrOCR or PULI-based checkpoints."""
+    try:
+        proc = TrOCRProcessor.from_pretrained(model_id, use_fast=True)
+        return proc.image_processor, proc.tokenizer
+    except Exception:
+        return (
+            AutoImageProcessor.from_pretrained(model_id),
+            AutoTokenizer.from_pretrained(model_id),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
 class LineOCRDataset(Dataset):
-    def __init__(self, jsonl_path: Path, processor: TrOCRProcessor, crops_dir: Path) -> None:
+    def __init__(self, jsonl_path: Path, image_processor, tokenizer, crops_dir: Path) -> None:
         self.items: list[dict] = []
         with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
                     self.items.append(json.loads(line))
-        self.processor = processor
+        self.image_processor = image_processor
+        self.tokenizer = tokenizer
         self.crops_dir = crops_dir
 
     def __len__(self) -> int:
@@ -69,8 +84,8 @@ class LineOCRDataset(Dataset):
         else:
             image_path = self.crops_dir / image_rel
         image = Image.open(image_path).convert("RGB")
-        pixel_values = self.processor(images=image, return_tensors="pt").pixel_values.squeeze(0)
-        labels = self.processor.tokenizer(
+        pixel_values = self.image_processor(images=image, return_tensors="pt").pixel_values.squeeze(0)
+        labels = self.tokenizer(
             item["text"],
             return_tensors="pt",
             padding="max_length",
@@ -78,7 +93,7 @@ class LineOCRDataset(Dataset):
             max_length=128,
         ).input_ids.squeeze(0)
         # Mask padding tokens so they don't contribute to loss
-        labels[labels == self.processor.tokenizer.pad_token_id] = -100
+        labels[labels == self.tokenizer.pad_token_id] = -100
         return {"pixel_values": pixel_values, "labels": labels}
 
 
@@ -314,12 +329,14 @@ def main() -> None:
     print(f"Loading model: {args.base_model}", flush=True)
 
     model_path = args.resume_from or args.base_model
-    processor = TrOCRProcessor.from_pretrained(args.base_model, use_fast=True)
+    image_processor, tokenizer = _load_image_processor_and_tokenizer(args.base_model)
     model = VisionEncoderDecoderModel.from_pretrained(model_path)
 
     # Required config for TrOCR generation
-    model.config.decoder_start_token_id = processor.tokenizer.cls_token_id
-    model.config.pad_token_id = processor.tokenizer.pad_token_id
+    decoder_start = getattr(tokenizer, "cls_token_id", None) or tokenizer.bos_token_id
+    pad = tokenizer.pad_token_id or tokenizer.eos_token_id
+    model.config.decoder_start_token_id = decoder_start
+    model.config.pad_token_id = pad
     model.config.vocab_size = model.config.decoder.vocab_size
     model.config.use_cache = False
     # Persist safer OCR decode defaults in checkpoints for downstream scripts.
@@ -333,8 +350,8 @@ def main() -> None:
         pass
 
     crops_dir = dataset_dir / "crops"
-    train_ds = LineOCRDataset(dataset_dir / "train.jsonl", processor, crops_dir)
-    val_ds = LineOCRDataset(dataset_dir / "val.jsonl", processor, crops_dir)
+    train_ds = LineOCRDataset(dataset_dir / "train.jsonl", image_processor, tokenizer, crops_dir)
+    val_ds = LineOCRDataset(dataset_dir / "val.jsonl", image_processor, tokenizer, crops_dir)
 
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}", flush=True)
     write_progress(message=f"Loaded: train={len(train_ds)} val={len(val_ds)}")
@@ -443,7 +460,8 @@ def main() -> None:
     model.generation_config.num_beams = 1
     model.generation_config.early_stopping = False
     trainer.save_model(str(best_dir))
-    processor.save_pretrained(str(best_dir))
+    tokenizer.save_pretrained(str(best_dir))
+    image_processor.save_pretrained(str(best_dir))
     print(f"Final model saved to {best_dir}", flush=True)
 
     # Final eval + CER on val set
@@ -457,7 +475,7 @@ def main() -> None:
         for item_dict in val_ds:
             pixel_values = item_dict["pixel_values"].unsqueeze(0).to(device)
             generated_ids = model.generate(pixel_values, **generation_kwargs)
-            pred = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+            pred = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
             # Recover reference text from dataset
             val_predictions.append(pred)
 

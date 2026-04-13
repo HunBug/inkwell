@@ -168,6 +168,21 @@ class MLflowCallback(TrainerCallback):
             mlflow.log_metric("val_loss", metrics["eval_loss"], step=epoch)
 
 
+class ProcessorSaveCallback(TrainerCallback):
+    """Saves image_processor + tokenizer into every epoch checkpoint so the dir is self-contained."""
+
+    def __init__(self, image_processor, tokenizer, checkpoints_dir: Path) -> None:
+        self._image_processor = image_processor
+        self._tokenizer = tokenizer
+        self._checkpoints_dir = checkpoints_dir
+
+    def on_save(self, args, state: TrainerState, control: TrainerControl, **kwargs) -> None:
+        ckpt_dir = self._checkpoints_dir / f"checkpoint-{state.global_step}"
+        if ckpt_dir.exists():
+            self._image_processor.save_pretrained(str(ckpt_dir))
+            self._tokenizer.save_pretrained(str(ckpt_dir))
+
+
 # ---------------------------------------------------------------------------
 # Val CER pass
 # ---------------------------------------------------------------------------
@@ -348,7 +363,10 @@ def main() -> None:
             args=training_args,
             train_dataset=train_ds,
             eval_dataset=val_ds,
-            callbacks=[MLflowCallback(args.epochs)],
+            callbacks=[
+                MLflowCallback(args.epochs),
+                ProcessorSaveCallback(image_processor, tokenizer, checkpoints_dir),
+            ],
         )
 
         print("Training…", flush=True)
