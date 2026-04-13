@@ -1,0 +1,8 @@
+# Hungarian pre-trainer requirements
+# Install on the GPU node alongside requirements-ml.txt:
+#   pip install -r requirements-ml.txt -r hu_pretrain/requirements.txt
+
+mlflow>=2.10,<3
+# pandas and pyarrow are used by download_data.py to read the labels parquet.
+# huggingface-hub is already pulled in by transformers.
+# Both are typically already installed via requirements-ml.txt + mlflow.
